@@ -27,11 +27,11 @@ MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
 MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "km140f")
-MQTT_PASS = os.getenv("MQTT_PASS", "")  # Keep empty by default for repository safety
+MQTT_PASS = os.getenv("MQTT_PASS", "")
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
-SW_VERSION = os.getenv("SW_VERSION", "1.1.0")
+SW_VERSION = os.getenv("SW_VERSION", "1.2.0")
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
@@ -39,7 +39,7 @@ SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "15"))
 MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
 
 # Throttle configuration (Debouncing)
-THROTTLE_HEARTBEAT_INTERVAL = 10.0  # Force a state update at least every 10s
+THROTTLE_HEARTBEAT_INTERVAL = 10.0
 
 # Global state trackers
 TCP_CONNECTED = False
@@ -164,8 +164,8 @@ def publish_discovery(mq: mqtt.Client) -> None:
         payload = {
             "name": f"{DEVICE_NAME} {sensor['name']}",
             "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
-            "state_topic": state_topic("state"),  # Updated to look at consolidated state
-            "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}", # Extracts value from JSON
+            "state_topic": state_topic("state"),
+            "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}",
             "unit_of_measurement": sensor.get("unit"),
             "state_class": sensor.get("state_class"),
             "device": DEVICE_INFO,
@@ -185,7 +185,7 @@ def publish_discovery(mq: mqtt.Client) -> None:
         payload = {
             "name": f"{DEVICE_NAME} {sensor['name']}",
             "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
-            "state_topic": state_topic("state"),  # Updated to look at consolidated state
+            "state_topic": state_topic("state"),
             "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}",
             "icon": sensor["icon"],
             "device": DEVICE_INFO,
@@ -201,7 +201,6 @@ def publish_availability(mq: mqtt.Client, online: bool) -> None:
     mq.publish(state_topic("availability"), "online" if online else "offline", retain=True)
 
 def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
-    """Evaluates value changes or heartbeat window before sending combined JSON payload."""
     global LAST_HEARTBEAT_TIME
     now = time.monotonic()
     should_publish = False
@@ -216,7 +215,6 @@ def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
             should_publish = True
 
     if should_publish:
-        # Merges full current metrics safely into a single multi-value JSON string
         mq.publish(state_topic("state"), json.dumps(LAST_PUBLISHED_VALUES), retain=True)
 
 def parse_a(fields: list[str]) -> dict[str, Any] | None:
@@ -236,6 +234,7 @@ def parse_a(fields: list[str]) -> dict[str, Any] | None:
         current = raw_current / 1000.0
         signed_current = current if charging else -current
 
+        # Calculated explicitly using integer scale first to limit float drift
         power = (raw_voltage * raw_current) / 100000.0
         signed_power = power if charging else -power
 
@@ -332,7 +331,6 @@ def tcp_loop(mq: mqtt.Client) -> None:
                 if not chunk:
                     raise ConnectionResetError("Connection closed by monitor")
 
-                # Native bytes reassembly handles split multibyte strings safely
                 buffer_bytes += chunk
                 while b"\n" in buffer_bytes:
                     line_bytes, buffer_bytes = buffer_bytes.split(b"\n", 1)
@@ -354,7 +352,6 @@ def tcp_loop(mq: mqtt.Client) -> None:
                     pass
 
 def setup_signal_handlers(mq: mqtt.Client) -> None:
-    """Interceptors to catch container teardown signals cleanly."""
     def handle_exit(signum, frame):
         log.info("Received shutdown signal. Clearing states...")
         try:
@@ -369,6 +366,7 @@ def setup_signal_handlers(mq: mqtt.Client) -> None:
     signal.signal(signal.SIGTERM, handle_exit)
     signal.signal(signal.SIGINT, handle_exit)
 
+# Added properties parameter to support Paho MQTT VERSION2 compliance
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
         log.info("MQTT connected")
@@ -378,11 +376,13 @@ def on_connect(client, userdata, flags, rc, properties=None):
     else:
         log.error("MQTT connect failed: rc=%s", rc)
 
+# Added properties parameter to support Paho MQTT VERSION2 compliance
 def on_disconnect(client, userdata, rc, properties=None):
     if rc != 0:
         log.warning("MQTT disconnected unexpectedly: rc=%s", rc)
 
 def build_mqtt_client() -> mqtt.Client:
+    # Swapped cleanly over to CallbackAPIVersion.VERSION2
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=DEVICE_ID)
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
