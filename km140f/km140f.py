@@ -16,13 +16,16 @@ from typing import Iterable
 
 import paho.mqtt.client as mqtt
 
+# ---------------------------------------------------------------------------
+# Configuration — override via environment variables
+# ---------------------------------------------------------------------------
 MONITOR_HOST = os.getenv("MONITOR_HOST", "192.168.0.204")
 MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
 
 MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "km140f")
-MQTT_PASS = os.getenv("MQTT_PASS", "")
+MQTT_PASS = os.getenv("MQTT_PASS", "")  # Removed hardcoded fallback password for security
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
@@ -32,6 +35,9 @@ POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
 SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "15"))
 MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
+
+# Global tracker to resolve MQTT reconnect race conditions safely
+TCP_CONNECTED = False
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -274,6 +280,7 @@ def extract_lines(buffer: str) -> tuple[list[str], str]:
     return parts[:-1], parts[-1]
 
 def tcp_loop(mq: mqtt.Client) -> None:
+    global TCP_CONNECTED
     last_c_request = 0.0
 
     while True:
@@ -284,20 +291,33 @@ def tcp_loop(mq: mqtt.Client) -> None:
             log.info("Connecting to monitor at %s:%d", MONITOR_HOST, MONITOR_PORT)
             sock = socket.create_connection((MONITOR_HOST, MONITOR_PORT), timeout=10)
             sock.settimeout(SOCKET_TIMEOUT)
+            
+            TCP_CONNECTED = True
             publish_availability(mq, True)
             log.info("Monitor connected")
 
             while True:
                 now = time.monotonic()
                 if now - last_c_request >= POLL_C_INTERVAL:
-                    sock.sendall(b":C\n")
-                    last_c_request = now
+                    try:
+                        sock.sendall(b":C\n")
+                        last_c_request = now
+                    except OSError as exc:
+                        log.warning("Failed to send :C poll command: %s", exc)
+                        raise
 
                 try:
                     chunk = sock.recv(512)
                 except socket.timeout:
-                    sock.sendall(b":A\n")
-                    continue
+                    try:
+                        sock.sendall(b":A\n")
+                        continue
+                    except OSError as exc:
+                        log.warning("Keepalive heartbeat failed: %s", exc)
+                        raise
+                except OSError as exc:
+                    log.warning("Socket read error encountered: %s", exc)
+                    raise
 
                 if not chunk:
                     raise ConnectionResetError("Connection closed by monitor")
@@ -311,6 +331,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
                         publish_state_map(mq, data)
 
         except Exception as exc:
+            TCP_CONNECTED = False
             log.error("TCP error: %s; reconnecting in %ds", exc, RECONNECT_DELAY)
             publish_availability(mq, False)
             time.sleep(RECONNECT_DELAY)
@@ -325,7 +346,8 @@ def on_connect(client, userdata, flags, rc):
     if rc == 0:
         log.info("MQTT connected")
         publish_discovery(client)
-        publish_availability(client, False)
+        # Evaluates the actual state of the TCP client to prevent race conditions
+        publish_availability(client, TCP_CONNECTED)
     else:
         log.error("MQTT connect failed: rc=%s", rc)
 
