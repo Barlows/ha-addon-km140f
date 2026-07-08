@@ -19,7 +19,7 @@ options:
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
   mqtt_user: "km140f"
-  mqtt_pass: "Ywcucsfg86!"
+  mqtt_pass: ""
   device_id: "junctek_km140f"
   device_name: "Junctek KM140F"
   poll_c_interval: 30
