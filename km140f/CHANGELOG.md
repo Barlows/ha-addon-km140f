@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1
+
+- My test
+
 ## 1.0.1
 
 - Fix: added `init: false` to config.yaml — required for s6-overlay base images.
