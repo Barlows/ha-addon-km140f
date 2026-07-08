@@ -22,7 +22,7 @@ MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
 MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "km140f")
-MQTT_PASS = os.getenv("MQTT_PASS", "Ywcucsfg86!")
+MQTT_PASS = os.getenv("MQTT_PASS", "")
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
