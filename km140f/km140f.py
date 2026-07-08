@@ -25,7 +25,7 @@ MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
 MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "km140f")
-MQTT_PASS = os.getenv("MQTT_PASS", "")  # Removed hardcoded fallback password for security
+MQTT_PASS = os.getenv("MQTT_PASS", "")  # Keep empty by default for repository safety
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
@@ -36,7 +36,7 @@ RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
 SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "15"))
 MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
 
-# Global tracker to resolve MQTT reconnect race conditions safely
+# Global tracker to manage availability accurately across connection cycles
 TCP_CONNECTED = False
 
 logging.basicConfig(
@@ -293,8 +293,14 @@ def tcp_loop(mq: mqtt.Client) -> None:
             sock.settimeout(SOCKET_TIMEOUT)
             
             TCP_CONNECTED = True
+            log.info("Monitor connected. Pausing briefly for entity alignment...")
+            
+            # 1-second buffer ensures Home Assistant finishes processing discovery payload
+            # before receiving the online status signal.
+            time.sleep(1.0)
+            
             publish_availability(mq, True)
-            log.info("Monitor connected")
+            log.info("Bridge status is now ONLINE")
 
             while True:
                 now = time.monotonic()
@@ -342,21 +348,23 @@ def tcp_loop(mq: mqtt.Client) -> None:
                 except OSError:
                     pass
 
-def on_connect(client, userdata, flags, rc):
+def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
         log.info("MQTT connected")
         publish_discovery(client)
-        # Evaluates the actual state of the TCP client to prevent race conditions
-        publish_availability(client, TCP_CONNECTED)
+        # Reflect actual state if an unexpected MQTT drop happens mid-operation
+        if TCP_CONNECTED:
+            publish_availability(client, True)
     else:
         log.error("MQTT connect failed: rc=%s", rc)
 
-def on_disconnect(client, userdata, rc):
+def on_disconnect(client, userdata, rc, properties=None):
     if rc != 0:
         log.warning("MQTT disconnected unexpectedly: rc=%s", rc)
 
 def build_mqtt_client() -> mqtt.Client:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=DEVICE_ID)
+    # Upgraded to CallbackAPIVersion.VERSION2 for library compliance
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=DEVICE_ID)
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
 
@@ -368,7 +376,7 @@ def build_mqtt_client() -> mqtt.Client:
 def main() -> None:
     log.info("Starting Junctek KM140F TCP to MQTT bridge")
     log.info("Monitor: %s:%d", MONITOR_HOST, MONITOR_PORT)
-    log.info("MQTT: %s:%d", MQTT_HOST, MQTT_PORT)
+    log.info("MQTT: %s:%d", MQTT_HOST, MONITOR_PORT)
 
     mq = build_mqtt_client()
 
