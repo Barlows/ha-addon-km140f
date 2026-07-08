@@ -2,7 +2,7 @@
 """
 Junctek KM140F — TCP to MQTT bridge
 Connects to the monitor's WiFi module (port 8899), parses :A= and :C= lines,
-and publishes sensor data to Home Assistant via MQTT Discovery.
+and publishes sensor data to Home Assistant via a unified JSON MQTT payload.
 """
 
 from __future__ import annotations
@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import signal
 import socket
+import sys
 import time
-from typing import Iterable
+from typing import Any
 
 import paho.mqtt.client as mqtt
 
@@ -29,15 +31,20 @@ MQTT_PASS = os.getenv("MQTT_PASS", "")  # Keep empty by default for repository s
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
-SW_VERSION = os.getenv("SW_VERSION", "1.0.0")
+SW_VERSION = os.getenv("SW_VERSION", "1.1.0")
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
 SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "15"))
 MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
 
-# Global tracker to manage availability accurately across connection cycles
+# Throttle configuration (Debouncing)
+THROTTLE_HEARTBEAT_INTERVAL = 10.0  # Force a state update at least every 10s
+
+# Global state trackers
 TCP_CONNECTED = False
+LAST_PUBLISHED_VALUES: dict[str, Any] = {}
+LAST_HEARTBEAT_TIME = 0.0
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -157,7 +164,8 @@ def publish_discovery(mq: mqtt.Client) -> None:
         payload = {
             "name": f"{DEVICE_NAME} {sensor['name']}",
             "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
-            "state_topic": state_topic(sensor["key"]),
+            "state_topic": state_topic("state"),  # Updated to look at consolidated state
+            "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}", # Extracts value from JSON
             "unit_of_measurement": sensor.get("unit"),
             "state_class": sensor.get("state_class"),
             "device": DEVICE_INFO,
@@ -171,43 +179,47 @@ def publish_discovery(mq: mqtt.Client) -> None:
         if sensor.get("icon"):
             payload["icon"] = sensor["icon"]
 
-        mq.publish(
-            discovery_topic("sensor", sensor["uid"]),
-            json.dumps(payload),
-            retain=True,
-        )
+        mq.publish(discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True)
 
     for sensor in TEXT_SENSORS:
         payload = {
             "name": f"{DEVICE_NAME} {sensor['name']}",
             "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
-            "state_topic": state_topic(sensor["key"]),
+            "state_topic": state_topic("state"),  # Updated to look at consolidated state
+            "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}",
             "icon": sensor["icon"],
             "device": DEVICE_INFO,
             "availability_topic": state_topic("availability"),
             "payload_available": "online",
             "payload_not_available": "offline",
         }
-        mq.publish(
-            discovery_topic("sensor", sensor["uid"]),
-            json.dumps(payload),
-            retain=True,
-        )
+        mq.publish(discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True)
 
-    log.info("Published MQTT discovery config")
+    log.info("Published consolidated MQTT discovery configurations")
 
 def publish_availability(mq: mqtt.Client, online: bool) -> None:
-    mq.publish(
-        state_topic("availability"),
-        "online" if online else "offline",
-        retain=True,
-    )
+    mq.publish(state_topic("availability"), "online" if online else "offline", retain=True)
 
-def publish_state_map(mq: mqtt.Client, data: dict[str, object]) -> None:
+def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
+    """Evaluates value changes or heartbeat window before sending combined JSON payload."""
+    global LAST_HEARTBEAT_TIME
+    now = time.monotonic()
+    should_publish = False
+
+    if now - LAST_HEARTBEAT_TIME >= THROTTLE_HEARTBEAT_INTERVAL:
+        should_publish = True
+        LAST_HEARTBEAT_TIME = now
+
     for key, value in data.items():
-        mq.publish(state_topic(key), str(value), retain=True)
+        if LAST_PUBLISHED_VALUES.get(key) != value:
+            LAST_PUBLISHED_VALUES[key] = value
+            should_publish = True
 
-def parse_a(fields: list[str]) -> dict[str, object] | None:
+    if should_publish:
+        # Merges full current metrics safely into a single multi-value JSON string
+        mq.publish(state_topic("state"), json.dumps(LAST_PUBLISHED_VALUES), retain=True)
+
+def parse_a(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 6:
         log.warning("Short A frame: %s", fields)
         return None
@@ -244,7 +256,7 @@ def parse_a(fields: list[str]) -> dict[str, object] | None:
         log.warning("parse_a error: %s | fields=%s", exc, fields)
         return None
 
-def parse_c(fields: list[str]) -> dict[str, object] | None:
+def parse_c(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 2:
         log.warning("Short C frame: %s", fields)
         return None
@@ -258,7 +270,7 @@ def parse_c(fields: list[str]) -> dict[str, object] | None:
         log.warning("parse_c error: %s | fields=%s", exc, fields)
         return None
 
-def parse_line(line: str) -> dict[str, object] | None:
+def parse_line(line: str) -> dict[str, Any] | None:
     line = line.strip()
     if not line:
         return None
@@ -274,18 +286,13 @@ def parse_line(line: str) -> dict[str, object] | None:
     log.debug("Ignoring line: %r", line)
     return None
 
-def extract_lines(buffer: str) -> tuple[list[str], str]:
-    normalized = buffer.replace("\r\n", "\n").replace("\r", "\n")
-    parts = normalized.split("\n")
-    return parts[:-1], parts[-1]
-
 def tcp_loop(mq: mqtt.Client) -> None:
     global TCP_CONNECTED
     last_c_request = 0.0
 
     while True:
         sock = None
-        buffer = ""
+        buffer_bytes = b""
 
         try:
             log.info("Connecting to monitor at %s:%d", MONITOR_HOST, MONITOR_PORT)
@@ -294,9 +301,6 @@ def tcp_loop(mq: mqtt.Client) -> None:
             
             TCP_CONNECTED = True
             log.info("Monitor connected. Pausing briefly for entity alignment...")
-            
-            # 1-second buffer ensures Home Assistant finishes processing discovery payload
-            # before receiving the online status signal.
             time.sleep(1.0)
             
             publish_availability(mq, True)
@@ -328,13 +332,14 @@ def tcp_loop(mq: mqtt.Client) -> None:
                 if not chunk:
                     raise ConnectionResetError("Connection closed by monitor")
 
-                buffer += chunk.decode("ascii", errors="ignore")
-                lines, buffer = extract_lines(buffer)
-
-                for line in lines:
-                    data = parse_line(line)
+                # Native bytes reassembly handles split multibyte strings safely
+                buffer_bytes += chunk
+                while b"\n" in buffer_bytes:
+                    line_bytes, buffer_bytes = buffer_bytes.split(b"\n", 1)
+                    line_str = line_bytes.decode("ascii", errors="ignore").strip()
+                    data = parse_line(line_str)
                     if data:
-                        publish_state_map(mq, data)
+                        publish_state_map_throttled(mq, data)
 
         except Exception as exc:
             TCP_CONNECTED = False
@@ -348,11 +353,26 @@ def tcp_loop(mq: mqtt.Client) -> None:
                 except OSError:
                     pass
 
+def setup_signal_handlers(mq: mqtt.Client) -> None:
+    """Interceptors to catch container teardown signals cleanly."""
+    def handle_exit(signum, frame):
+        log.info("Received shutdown signal. Clearing states...")
+        try:
+            publish_availability(mq, False)
+            mq.loop_stop()
+            mq.disconnect()
+        except Exception:
+            pass
+        log.info("Bridge exited cleanly.")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, handle_exit)
+    signal.signal(signal.SIGINT, handle_exit)
+
 def on_connect(client, userdata, flags, rc, properties=None):
     if rc == 0:
         log.info("MQTT connected")
         publish_discovery(client)
-        # Reflect actual state if an unexpected MQTT drop happens mid-operation
         if TCP_CONNECTED:
             publish_availability(client, True)
     else:
@@ -363,7 +383,6 @@ def on_disconnect(client, userdata, rc, properties=None):
         log.warning("MQTT disconnected unexpectedly: rc=%s", rc)
 
 def build_mqtt_client() -> mqtt.Client:
-    # Upgraded to CallbackAPIVersion.VERSION2 for library compliance
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=DEVICE_ID)
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
@@ -375,9 +394,6 @@ def build_mqtt_client() -> mqtt.Client:
 
 def main() -> None:
     log.info("Starting Junctek KM140F TCP to MQTT bridge")
-    log.info("Monitor: %s:%d", MONITOR_HOST, MONITOR_PORT)
-    log.info("MQTT: %s:%d", MQTT_HOST, MONITOR_PORT)
-
     mq = build_mqtt_client()
 
     while True:
@@ -389,6 +405,7 @@ def main() -> None:
             time.sleep(RECONNECT_DELAY)
 
     mq.loop_start()
+    setup_signal_handlers(mq)
     tcp_loop(mq)
 
 if __name__ == "__main__":
