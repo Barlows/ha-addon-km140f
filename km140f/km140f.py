@@ -3,275 +3,362 @@
 Junctek KM140F — TCP to MQTT bridge
 Connects to the monitor's WiFi module (port 8899), parses :A= and :C= lines,
 and publishes sensor data to Home Assistant via MQTT Discovery.
-
-Confirmed :A= field map:
-  [0]  voltage,            *0.01  V
-  [1]  current (abs),      *0.001 A
-  [2]  direction,           0=discharging / 1=charging
-  [3]  time remaining,      minutes
-  [4]  remaining capacity,  *0.001 Ah
-  [5]  set capacity,        *0.1   Ah
-  [6]  display brightness   (ignored)
-  [7]  protection limits    (ignored)
-  [8]  device setting       (ignored)
-
-Confirmed :C= field map:
-  [0]  total energy charged,    *0.001 kWh
-  [1]  total energy discharged, *0.001 kWh
 """
 
+from __future__ import annotations
+
+import json
+import logging
 import os
 import socket
 import time
-import json
-import logging
+from typing import Iterable
+
 import paho.mqtt.client as mqtt
 
-# ---------------------------------------------------------------------------
-# Configuration — override via environment variables
-# ---------------------------------------------------------------------------
-MONITOR_HOST = os.getenv("MONITOR_HOST", "192.168.1.100")  # WiFi module IP
+MONITOR_HOST = os.getenv("MONITOR_HOST", "192.168.0.204")
 MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
 
-MQTT_HOST    = os.getenv("MQTT_HOST", "core-mosquitto")
-MQTT_PORT    = int(os.getenv("MQTT_PORT", "1883"))
-MQTT_USER    = os.getenv("MQTT_USER", "")
-MQTT_PASS    = os.getenv("MQTT_PASS", "")
+MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_USER = os.getenv("MQTT_USER", "km140f")
+MQTT_PASS = os.getenv("MQTT_PASS", "Ywcucsfg86!")
 
-DEVICE_ID    = os.getenv("DEVICE_ID", "junctek_km140f")
-DEVICE_NAME  = os.getenv("DEVICE_NAME", "Junctek KM140F")
+DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
+DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
+SW_VERSION = os.getenv("SW_VERSION", "1.0.0")
 
-POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))  # seconds between :C requests
+POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
+SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "15"))
+MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
 
-# ---------------------------------------------------------------------------
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 log = logging.getLogger("km140f")
 
-# ---------------------------------------------------------------------------
-# MQTT helpers
-# ---------------------------------------------------------------------------
 DEVICE_INFO = {
     "identifiers": [DEVICE_ID],
     "name": DEVICE_NAME,
     "manufacturer": "Junctek",
     "model": "KM140F",
+    "sw_version": SW_VERSION,
 }
 
-def discovery_topic(component, unique_id):
-    return f"homeassistant/{component}/{DEVICE_ID}/{unique_id}/config"
-
-def state_topic(key):
-    return f"{DEVICE_ID}/{key}"
-
 SENSORS = [
-    # (unique_id, name, key, unit, device_class, state_class, icon)
-    ("voltage",            "Voltage",               "voltage",            "V",   "voltage",     "measurement", None),
-    ("current",            "Current",               "current",            "A",   "current",     "measurement", None),
-    ("power",              "Power",                 "power",              "W",   "power",       "measurement", None),
-    ("remaining_capacity", "Remaining Capacity",    "remaining_capacity", "Ah",  None,          "measurement", "mdi:battery-charging"),
-    ("time_remaining",     "Time Remaining",        "time_remaining",     "min", None,          "measurement", "mdi:timer-sand"),
-    ("set_capacity",       "Set Capacity",          "set_capacity",       "Ah",  None,          "measurement", "mdi:battery-charging-100"),
-    ("soc",                "State of Charge",       "soc",                "%",   "battery",     "measurement", None),
-    ("charge_kwh",         "Total Energy Charged",  "charge_kwh",         "kWh", "energy",      "total_increasing", None),
-    ("discharge_kwh",      "Total Energy Discharged","discharge_kwh",     "kWh", "energy",      "total_increasing", None),
+    {
+        "uid": "voltage",
+        "name": "Voltage",
+        "key": "voltage",
+        "unit": "V",
+        "device_class": "voltage",
+        "state_class": "measurement",
+        "precision": 2,
+    },
+    {
+        "uid": "current",
+        "name": "Current",
+        "key": "current",
+        "unit": "A",
+        "device_class": "current",
+        "state_class": "measurement",
+        "precision": 2,
+    },
+    {
+        "uid": "power",
+        "name": "Power",
+        "key": "power",
+        "unit": "W",
+        "device_class": "power",
+        "state_class": "measurement",
+        "precision": 2,
+    },
+    {
+        "uid": "remaining_capacity",
+        "name": "Remaining Capacity",
+        "key": "remaining_capacity",
+        "unit": "Ah",
+        "icon": "mdi:battery-charging",
+        "state_class": "measurement",
+        "precision": 3,
+    },
+    {
+        "uid": "time_remaining",
+        "name": "Time Remaining",
+        "key": "time_remaining",
+        "unit": "min",
+        "icon": "mdi:timer-sand",
+        "state_class": "measurement",
+        "precision": 0,
+    },
+    {
+        "uid": "set_capacity",
+        "name": "Set Capacity",
+        "key": "set_capacity",
+        "unit": "Ah",
+        "icon": "mdi:battery-charging-100",
+        "state_class": "measurement",
+        "precision": 1,
+    },
+    {
+        "uid": "soc",
+        "name": "State of Charge",
+        "key": "soc",
+        "unit": "%",
+        "device_class": "battery",
+        "state_class": "measurement",
+        "precision": 1,
+    },
+    {
+        "uid": "charge_kwh",
+        "name": "Total Energy Charged",
+        "key": "charge_kwh",
+        "unit": "kWh",
+        "device_class": "energy",
+        "state_class": "total_increasing",
+        "precision": 3,
+    },
+    {
+        "uid": "discharge_kwh",
+        "name": "Total Energy Discharged",
+        "key": "discharge_kwh",
+        "unit": "kWh",
+        "device_class": "energy",
+        "state_class": "total_increasing",
+        "precision": 3,
+    },
 ]
 
 TEXT_SENSORS = [
-    # (unique_id, name, key, icon)
-    ("status", "Status", "status", "mdi:battery-arrow-up-outline"),
+    {
+        "uid": "status",
+        "name": "Status",
+        "key": "status",
+        "icon": "mdi:battery-arrow-up-outline",
+    },
 ]
 
-def publish_discovery(mq):
-    """Publish MQTT Discovery configs for all sensors."""
-    for uid, name, key, unit, dev_class, state_class, icon in SENSORS:
+def discovery_topic(component: str, unique_id: str) -> str:
+    return f"homeassistant/{component}/{DEVICE_ID}/{unique_id}/config"
+
+def state_topic(key: str) -> str:
+    return f"{DEVICE_ID}/{key}"
+
+def publish_discovery(mq: mqtt.Client) -> None:
+    for sensor in SENSORS:
         payload = {
-            "name": f"{DEVICE_NAME} {name}",
-            "unique_id": f"{DEVICE_ID}_{uid}",
-            "state_topic": state_topic(key),
-            "unit_of_measurement": unit,
-            "state_class": state_class,
+            "name": f"{DEVICE_NAME} {sensor['name']}",
+            "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
+            "state_topic": state_topic(sensor["key"]),
+            "unit_of_measurement": sensor.get("unit"),
+            "state_class": sensor.get("state_class"),
+            "device": DEVICE_INFO,
+            "availability_topic": state_topic("availability"),
+            "payload_available": "online",
+            "payload_not_available": "offline",
+            "suggested_display_precision": sensor["precision"],
+        }
+        if sensor.get("device_class"):
+            payload["device_class"] = sensor["device_class"]
+        if sensor.get("icon"):
+            payload["icon"] = sensor["icon"]
+
+        mq.publish(
+            discovery_topic("sensor", sensor["uid"]),
+            json.dumps(payload),
+            retain=True,
+        )
+
+    for sensor in TEXT_SENSORS:
+        payload = {
+            "name": f"{DEVICE_NAME} {sensor['name']}",
+            "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
+            "state_topic": state_topic(sensor["key"]),
+            "icon": sensor["icon"],
             "device": DEVICE_INFO,
             "availability_topic": state_topic("availability"),
             "payload_available": "online",
             "payload_not_available": "offline",
         }
-        if dev_class:
-            payload["device_class"] = dev_class
-        if icon:
-            payload["icon"] = icon
+        mq.publish(
+            discovery_topic("sensor", sensor["uid"]),
+            json.dumps(payload),
+            retain=True,
+        )
 
-        mq.publish(discovery_topic("sensor", uid), json.dumps(payload), retain=True)
+    log.info("Published MQTT discovery config")
 
-    for uid, name, key, icon in TEXT_SENSORS:
-        payload = {
-            "name": f"{DEVICE_NAME} {name}",
-            "unique_id": f"{DEVICE_ID}_{uid}",
-            "state_topic": state_topic(key),
-            "icon": icon,
-            "device": DEVICE_INFO,
-            "availability_topic": state_topic("availability"),
-            "payload_available": "online",
-            "payload_not_available": "offline",
-        }
-        mq.publish(discovery_topic("sensor", uid), json.dumps(payload), retain=True)
+def publish_availability(mq: mqtt.Client, online: bool) -> None:
+    mq.publish(
+        state_topic("availability"),
+        "online" if online else "offline",
+        retain=True,
+    )
 
-    log.info("MQTT Discovery configs published.")
+def publish_state_map(mq: mqtt.Client, data: dict[str, object]) -> None:
+    for key, value in data.items():
+        mq.publish(state_topic(key), str(value), retain=True)
 
-def publish_availability(mq, online: bool):
-    mq.publish(state_topic("availability"), "online" if online else "offline", retain=True)
-
-# ---------------------------------------------------------------------------
-# Parsing
-# ---------------------------------------------------------------------------
-def parse_a(fields, mq):
+def parse_a(fields: list[str]) -> dict[str, object] | None:
     if len(fields) < 6:
-        return
+        log.warning("Short A frame: %s", fields)
+        return None
+
     try:
-        raw0 = int(fields[0])
-        raw1 = int(fields[1])
-        charging = (int(fields[2]) == 1)
-        mins     = int(fields[3])
-        ah_rem   = int(fields[4]) / 1000.0
+        raw_voltage = int(fields[0])
+        raw_current = int(fields[1])
+        charging = int(fields[2]) == 1
+        mins = int(fields[3])
+        ah_rem = int(fields[4]) / 1000.0
         capacity = int(fields[5]) / 10.0
 
-        voltage  = raw0 / 100.0
-        current  = raw1 / 1000.0
-        # positive = charging, negative = discharging
+        voltage = raw_voltage / 100.0
+        current = raw_current / 1000.0
         signed_current = current if charging else -current
-        # power from raw integers to avoid float drift
-        power = (raw0 * raw1) / 100000.0
+
+        power = (raw_voltage * raw_current) / 100000.0
         signed_power = power if charging else -power
 
-        soc = round((ah_rem / capacity) * 100.0, 1) if capacity > 0 else 0
+        soc = round((ah_rem / capacity) * 100.0, 1) if capacity > 0 else 0.0
         soc = max(0.0, min(100.0, soc))
 
-        status = "Charging" if charging else "Discharging"
-
-        data = {
-            "voltage":            round(voltage, 2),
-            "current":            round(signed_current, 2),
-            "power":              round(signed_power, 2),
+        return {
+            "voltage": round(voltage, 2),
+            "current": round(signed_current, 2),
+            "power": round(signed_power, 2),
             "remaining_capacity": round(ah_rem, 3),
-            "time_remaining":     mins,
-            "set_capacity":       round(capacity, 1),
-            "soc":                soc,
-            "status":             status,
+            "time_remaining": mins,
+            "set_capacity": round(capacity, 1),
+            "soc": soc,
+            "status": "Charging" if charging else "Discharging",
         }
-        for key, val in data.items():
-            mq.publish(state_topic(key), str(val))
+    except ValueError as exc:
+        log.warning("parse_a error: %s | fields=%s", exc, fields)
+        return None
 
-        log.debug("A: %s", data)
-    except (ValueError, ZeroDivisionError) as e:
-        log.warning("parse_a error: %s | fields: %s", e, fields)
-
-def parse_c(fields, mq):
+def parse_c(fields: list[str]) -> dict[str, object] | None:
     if len(fields) < 2:
-        return
-    try:
-        charge_kwh    = int(fields[0]) / 1000.0
-        discharge_kwh = int(fields[1]) / 1000.0
-        mq.publish(state_topic("charge_kwh"),    str(round(charge_kwh, 3)))
-        mq.publish(state_topic("discharge_kwh"), str(round(discharge_kwh, 3)))
-        log.debug("C: charged=%.3f kWh  discharged=%.3f kWh", charge_kwh, discharge_kwh)
-    except ValueError as e:
-        log.warning("parse_c error: %s | fields: %s", e, fields)
+        log.warning("Short C frame: %s", fields)
+        return None
 
-def parse_line(line: str, mq):
+    try:
+        return {
+            "charge_kwh": round(int(fields[0]) / 1000.0, 3),
+            "discharge_kwh": round(int(fields[1]) / 1000.0, 3),
+        }
+    except ValueError as exc:
+        log.warning("parse_c error: %s | fields=%s", exc, fields)
+        return None
+
+def parse_line(line: str) -> dict[str, object] | None:
     line = line.strip()
     if not line:
-        return
-    for prefix in ("A=", "C="):
-        idx = line.find(prefix)
-        if idx != -1:
-            csv = line[idx + 2:]
-            fields = csv.rstrip(",").split(",")
-            if prefix == "A=":
-                parse_a(fields, mq)
-            elif prefix == "C=":
-                parse_c(fields, mq)
-            return
+        return None
 
-# ---------------------------------------------------------------------------
-# TCP connection loop
-# ---------------------------------------------------------------------------
-def tcp_loop(mq):
-    buf = ""
+    if "A=" in line:
+        fields = line.split("A=", 1)[1].rstrip(",").split(",")
+        return parse_a(fields)
+
+    if "C=" in line:
+        fields = line.split("C=", 1)[1].rstrip(",").split(",")
+        return parse_c(fields)
+
+    log.debug("Ignoring line: %r", line)
+    return None
+
+def extract_lines(buffer: str) -> tuple[list[str], str]:
+    normalized = buffer.replace("\r\n", "\n").replace("\r", "\n")
+    parts = normalized.split("\n")
+    return parts[:-1], parts[-1]
+
+def tcp_loop(mq: mqtt.Client) -> None:
     last_c_request = 0.0
-    sock = None
 
     while True:
+        sock = None
+        buffer = ""
+
         try:
-            log.info("Connecting to %s:%d ...", MONITOR_HOST, MONITOR_PORT)
+            log.info("Connecting to monitor at %s:%d", MONITOR_HOST, MONITOR_PORT)
             sock = socket.create_connection((MONITOR_HOST, MONITOR_PORT), timeout=10)
-            sock.settimeout(15)
+            sock.settimeout(SOCKET_TIMEOUT)
             publish_availability(mq, True)
-            log.info("Connected.")
+            log.info("Monitor connected")
 
             while True:
-                # Periodically request :C= (energy totals)
-                now = time.time()
+                now = time.monotonic()
                 if now - last_c_request >= POLL_C_INTERVAL:
                     sock.sendall(b":C\n")
                     last_c_request = now
 
                 try:
-                    chunk = sock.recv(256).decode("ascii", errors="ignore")
+                    chunk = sock.recv(512)
                 except socket.timeout:
-                    # Send a keepalive — monitor should respond with :A=
                     sock.sendall(b":A\n")
                     continue
 
                 if not chunk:
                     raise ConnectionResetError("Connection closed by monitor")
 
-                buf += chunk
-                while "\n" in buf or "\r" in buf:
-                    for sep in ("\r\n", "\n", "\r"):
-                        if sep in buf:
-                            line, buf = buf.split(sep, 1)
-                            parse_line(line, mq)
-                            break
+                buffer += chunk.decode("ascii", errors="ignore")
+                lines, buffer = extract_lines(buffer)
 
-        except Exception as e:
-            log.error("TCP error: %s — reconnecting in %ds", e, RECONNECT_DELAY)
+                for line in lines:
+                    data = parse_line(line)
+                    if data:
+                        publish_state_map(mq, data)
+
+        except Exception as exc:
+            log.error("TCP error: %s; reconnecting in %ds", exc, RECONNECT_DELAY)
             publish_availability(mq, False)
-            if sock:
+            time.sleep(RECONNECT_DELAY)
+        finally:
+            if sock is not None:
                 try:
                     sock.close()
-                except Exception:
+                except OSError:
                     pass
-                sock = None
-            time.sleep(RECONNECT_DELAY)
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-def main():
-    log.info("Starting Junctek KM140F TCP→MQTT bridge")
-    log.info("Monitor : %s:%d", MONITOR_HOST, MONITOR_PORT)
-    log.info("MQTT    : %s:%d", MQTT_HOST, MQTT_PORT)
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        log.info("MQTT connected")
+        publish_discovery(client)
+        publish_availability(client, False)
+    else:
+        log.error("MQTT connect failed: rc=%s", rc)
 
-    mq = mqtt.Client(client_id=DEVICE_ID)
+def on_disconnect(client, userdata, rc):
+    if rc != 0:
+        log.warning("MQTT disconnected unexpectedly: rc=%s", rc)
+
+def build_mqtt_client() -> mqtt.Client:
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=DEVICE_ID)
     if MQTT_USER:
-        mq.username_pw_set(MQTT_USER, MQTT_PASS)
+        client.username_pw_set(MQTT_USER, MQTT_PASS)
 
-    mq.will_set(state_topic("availability"), "offline", retain=True)
+    client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
+    client.will_set(state_topic("availability"), "offline", retain=True)
+    return client
+
+def main() -> None:
+    log.info("Starting Junctek KM140F TCP to MQTT bridge")
+    log.info("Monitor: %s:%d", MONITOR_HOST, MONITOR_PORT)
+    log.info("MQTT: %s:%d", MQTT_HOST, MQTT_PORT)
+
+    mq = build_mqtt_client()
 
     while True:
         try:
-            mq.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+            mq.connect(MQTT_HOST, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
             break
-        except Exception as e:
-            log.error("MQTT connect failed: %s — retrying in %ds", e, RECONNECT_DELAY)
+        except Exception as exc:
+            log.error("MQTT connect failed: %s; retrying in %ds", exc, RECONNECT_DELAY)
             time.sleep(RECONNECT_DELAY)
 
     mq.loop_start()
-    publish_discovery(mq)
-
     tcp_loop(mq)
 
 if __name__ == "__main__":
