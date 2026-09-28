@@ -22,8 +22,11 @@ options:
   mqtt_pass: ""
   device_id: "junctek_km140f"
   device_name: "Junctek KM140F"
+  sw_version: "1.2.0"
   poll_c_interval: 30
   reconnect_delay: 5
+  socket_timeout: 15
+  mqtt_keepalive: 60
 
 schema:
   monitor_host: str
@@ -34,5 +37,8 @@ schema:
   mqtt_pass: password
   device_id: str
   device_name: str
+  sw_version: str
   poll_c_interval: int
   reconnect_delay: int
+  socket_timeout: int
+  mqtt_keepalive: int

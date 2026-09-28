@@ -8,8 +8,11 @@ export MQTT_USER=$(bashio::config 'mqtt_user')
 export MQTT_PASS=$(bashio::config 'mqtt_pass')
 export DEVICE_ID=$(bashio::config 'device_id')
 export DEVICE_NAME=$(bashio::config 'device_name')
+export SW_VERSION=$(bashio::config 'sw_version')
 export POLL_C_INTERVAL=$(bashio::config 'poll_c_interval')
 export RECONNECT_DELAY=$(bashio::config 'reconnect_delay')
+export SOCKET_TIMEOUT=$(bashio::config 'socket_timeout')
+export MQTT_KEEPALIVE=$(bashio::config 'mqtt_keepalive')
 
 bashio::log.info "Starting Junctek KM140F bridge → ${MONITOR_HOST}:${MONITOR_PORT}"
 
