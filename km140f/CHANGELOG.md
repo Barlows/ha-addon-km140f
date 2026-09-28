@@ -2,7 +2,11 @@
 
 ## 2.0.1
 
-- My test
+- Fix: protocol parsing now uses startswith for reliable frame matching
+- Fix: handle \r\n line endings from device
+- Fix: consistent documentation URLs and default values
+- Fix: MQTT callbacks and signal handlers have full type hints
+- Fix: extra protocol fields logged at debug level
 
 ## 1.0.1
 
