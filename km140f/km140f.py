@@ -222,6 +222,9 @@ def parse_a(fields: list[str]) -> dict[str, Any] | None:
         log.warning("Short A frame: %s", fields)
         return None
 
+    if len(fields) > 6:
+        log.debug("A frame has %d extra fields: %s", len(fields) - 6, fields[6:])
+
     try:
         raw_voltage = int(fields[0])
         raw_current = int(fields[1])
@@ -274,12 +277,12 @@ def parse_line(line: str) -> dict[str, Any] | None:
     if not line:
         return None
 
-    if "A=" in line:
-        fields = line.split("A=", 1)[1].rstrip(",").split(",")
+    if line.startswith(":A="):
+        fields = line[3:].rstrip(",").split(",")
         return parse_a(fields)
 
-    if "C=" in line:
-        fields = line.split("C=", 1)[1].rstrip(",").split(",")
+    if line.startswith(":C="):
+        fields = line[3:].rstrip(",").split(",")
         return parse_c(fields)
 
     log.debug("Ignoring line: %r", line)
@@ -334,7 +337,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
                 buffer_bytes += chunk
                 while b"\n" in buffer_bytes:
                     line_bytes, buffer_bytes = buffer_bytes.split(b"\n", 1)
-                    line_str = line_bytes.decode("ascii", errors="ignore").strip()
+                    line_str = line_bytes.decode("ascii", errors="replace").strip()
                     data = parse_line(line_str)
                     if data:
                         publish_state_map_throttled(mq, data)
@@ -352,7 +355,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
                     pass
 
 def setup_signal_handlers(mq: mqtt.Client) -> None:
-    def handle_exit(signum, frame):
+    def handle_exit(signum: int, frame: Any) -> None:
         log.info("Received shutdown signal. Clearing states...")
         try:
             publish_availability(mq, False)
@@ -367,7 +370,7 @@ def setup_signal_handlers(mq: mqtt.Client) -> None:
     signal.signal(signal.SIGINT, handle_exit)
 
 # Added properties parameter to support Paho MQTT VERSION2 compliance
-def on_connect(client, userdata, flags, rc, properties=None):
+def on_connect(client: mqtt.Client, userdata: Any, flags: Any, rc: int, properties: Any = None) -> None:
     if rc == 0:
         log.info("MQTT connected")
         publish_discovery(client)
@@ -377,7 +380,7 @@ def on_connect(client, userdata, flags, rc, properties=None):
         log.error("MQTT connect failed: rc=%s", rc)
 
 # Added properties parameter to support Paho MQTT VERSION2 compliance
-def on_disconnect(client, userdata, rc, properties=None):
+def on_disconnect(client: mqtt.Client, userdata: Any, rc: int, properties: Any = None) -> None:
     if rc != 0:
         log.warning("MQTT disconnected unexpectedly: rc=%s", rc)
 
