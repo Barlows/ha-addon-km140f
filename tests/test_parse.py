@@ -1,0 +1,129 @@
+"""Unit tests for KM140F protocol parsing functions."""
+
+import sys
+from pathlib import Path
+
+# Add parent directory to path so we can import km140f
+sys.path.insert(0, str(Path(__file__).parent.parent / "km140f"))
+
+from km140f import parse_a, parse_c, parse_line
+
+
+class TestParseA:
+    """Tests for parse_a function."""
+
+    def test_basic_charging(self):
+        result = parse_a(["1200", "5000", "1", "120", "80000", "1000"])
+        assert result is not None
+        assert result["voltage"] == 12.0
+        assert result["current"] == 5.0
+        assert result["power"] == 60.0
+        assert result["remaining_capacity"] == 80.0
+        assert result["time_remaining"] == 120
+        assert result["set_capacity"] == 100.0
+        assert result["soc"] == 80.0
+        assert result["status"] == "Charging"
+
+    def test_basic_discharging(self):
+        result = parse_a(["1200", "5000", "0", "120", "80000", "1000"])
+        assert result is not None
+        assert result["voltage"] == 12.0
+        assert result["current"] == -5.0
+        assert result["power"] == -60.0
+        assert result["status"] == "Discharging"
+
+    def test_zero_capacity(self):
+        result = parse_a(["1200", "0", "1", "0", "0", "0"])
+        assert result is not None
+        assert result["soc"] == 0.0
+
+    def test_soc_clamped_high(self):
+        result = parse_a(["1200", "0", "1", "0", "150000", "1000"])
+        assert result is not None
+        assert result["soc"] == 100.0
+
+    def test_soc_clamped_low(self):
+        result = parse_a(["1200", "0", "0", "0", "0", "1000"])
+        assert result is not None
+        assert result["soc"] == 0.0
+
+    def test_short_frame(self):
+        result = parse_a(["1200", "5000"])
+        assert result is None
+
+    def test_invalid_values(self):
+        result = parse_a(["abc", "def", "1", "120", "80000", "1000"])
+        assert result is None
+
+    def test_extra_fields_ignored(self):
+        result = parse_a(["1200", "5000", "1", "120", "80000", "1000", "extra", "fields"])
+        assert result is not None
+        assert result["voltage"] == 12.0
+
+
+class TestParseC:
+    """Tests for parse_c function."""
+
+    def test_basic(self):
+        result = parse_c(["12345", "67890"])
+        assert result is not None
+        assert result["charge_kwh"] == 12.345
+        assert result["discharge_kwh"] == 67.89
+
+    def test_zero_values(self):
+        result = parse_c(["0", "0"])
+        assert result is not None
+        assert result["charge_kwh"] == 0.0
+        assert result["discharge_kwh"] == 0.0
+
+    def test_short_frame(self):
+        result = parse_c(["12345"])
+        assert result is None
+
+    def test_invalid_values(self):
+        result = parse_c(["abc", "def"])
+        assert result is None
+
+
+class TestParseLine:
+    """Tests for parse_line function."""
+
+    def test_a_line(self):
+        result = parse_line(":A=1200,5000,1,120,80000,1000")
+        assert result is not None
+        assert result["voltage"] == 12.0
+
+    def test_c_line(self):
+        result = parse_line(":C=12345,67890")
+        assert result is not None
+        assert result["charge_kwh"] == 12.345
+
+    def test_empty_line(self):
+        result = parse_line("")
+        assert result is None
+
+    def test_whitespace_only(self):
+        result = parse_line("   ")
+        assert result is None
+
+    def test_unknown_line(self):
+        result = parse_line(":X=123,456")
+        assert result is None
+
+    def test_a_in_middle_not_matched(self):
+        result = parse_line("prefix:A=1200,5000,1,120,80000,1000")
+        assert result is None
+
+    def test_c_in_middle_not_matched(self):
+        result = parse_line("prefix:C=12345,67890")
+        assert result is None
+
+    def test_a_with_trailing_comma(self):
+        result = parse_line(":A=1200,5000,1,120,80000,1000,")
+        assert result is not None
+        assert result["voltage"] == 12.0
+
+    def test_c_with_trailing_comma(self):
+        result = parse_line(":C=12345,67890,")
+        assert result is not None
+        assert result["charge_kwh"] == 12.345
