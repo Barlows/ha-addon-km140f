@@ -41,10 +41,19 @@ MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
 # Throttle configuration (Debouncing)
 THROTTLE_HEARTBEAT_INTERVAL = 10.0
 
-# Global state trackers
-TCP_CONNECTED = False
-LAST_PUBLISHED_VALUES: dict[str, Any] = {}
-LAST_HEARTBEAT_TIME = 0.0
+
+class BridgeState:
+    """Encapsulates mutable bridge state for better testability."""
+
+    def __init__(self) -> None:
+        self.tcp_connected: bool = False
+        self.last_published_values: dict[str, Any] = {}
+        self.last_heartbeat_time: float = 0.0
+
+
+# Global state instance
+STATE = BridgeState()
+TCP_CONNECTED = STATE.tcp_connected  # Backwards compatibility
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -201,21 +210,20 @@ def publish_availability(mq: mqtt.Client, online: bool) -> None:
     mq.publish(state_topic("availability"), "online" if online else "offline", retain=True)
 
 def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
-    global LAST_HEARTBEAT_TIME
     now = time.monotonic()
     should_publish = False
 
-    if now - LAST_HEARTBEAT_TIME >= THROTTLE_HEARTBEAT_INTERVAL:
+    if now - STATE.last_heartbeat_time >= THROTTLE_HEARTBEAT_INTERVAL:
         should_publish = True
-        LAST_HEARTBEAT_TIME = now
+        STATE.last_heartbeat_time = now
 
     for key, value in data.items():
-        if LAST_PUBLISHED_VALUES.get(key) != value:
-            LAST_PUBLISHED_VALUES[key] = value
+        if STATE.last_published_values.get(key) != value:
+            STATE.last_published_values[key] = value
             should_publish = True
 
     if should_publish:
-        mq.publish(state_topic("state"), json.dumps(LAST_PUBLISHED_VALUES), retain=True)
+        mq.publish(state_topic("state"), json.dumps(STATE.last_published_values), retain=True)
 
 def parse_a(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 6:
@@ -286,7 +294,6 @@ def parse_line(line: str) -> dict[str, Any] | None:
     return None
 
 def tcp_loop(mq: mqtt.Client) -> None:
-    global TCP_CONNECTED
     last_c_request = 0.0
 
     while True:
@@ -298,10 +305,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
             sock = socket.create_connection((MONITOR_HOST, MONITOR_PORT), timeout=10)
             sock.settimeout(SOCKET_TIMEOUT)
             
-            TCP_CONNECTED = True
-            log.info("Monitor connected. Pausing briefly for entity alignment...")
-            time.sleep(1.0)
-            
+            STATE.tcp_connected = True
             publish_availability(mq, True)
             log.info("Bridge status is now ONLINE")
 
@@ -334,13 +338,13 @@ def tcp_loop(mq: mqtt.Client) -> None:
                 buffer_bytes += chunk
                 while b"\n" in buffer_bytes:
                     line_bytes, buffer_bytes = buffer_bytes.split(b"\n", 1)
-                    line_str = line_bytes.decode("ascii", errors="ignore").strip()
+                    line_str = line_bytes.decode("ascii", errors="replace").strip()
                     data = parse_line(line_str)
                     if data:
                         publish_state_map_throttled(mq, data)
 
-        except Exception as exc:
-            TCP_CONNECTED = False
+        except (OSError, ConnectionError, ValueError) as exc:
+            STATE.tcp_connected = False
             log.error("TCP error: %s; reconnecting in %ds", exc, RECONNECT_DELAY)
             publish_availability(mq, False)
             time.sleep(RECONNECT_DELAY)
@@ -367,17 +371,17 @@ def setup_signal_handlers(mq: mqtt.Client) -> None:
     signal.signal(signal.SIGINT, handle_exit)
 
 # Added properties parameter to support Paho MQTT VERSION2 compliance
-def on_connect(client, userdata, flags, rc, properties=None):
+def on_connect(client: mqtt.Client, userdata: Any, flags: Any, rc: int, properties: Any = None) -> None:
     if rc == 0:
         log.info("MQTT connected")
         publish_discovery(client)
-        if TCP_CONNECTED:
+        if STATE.tcp_connected:
             publish_availability(client, True)
     else:
         log.error("MQTT connect failed: rc=%s", rc)
 
 # Added properties parameter to support Paho MQTT VERSION2 compliance
-def on_disconnect(client, userdata, rc, properties=None):
+def on_disconnect(client: mqtt.Client, userdata: Any, rc: int, properties: Any = None) -> None:
     if rc != 0:
         log.warning("MQTT disconnected unexpectedly: rc=%s", rc)
 
