@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.1.0
+
+### New Features
+- **Data buffering**: Messages are buffered when MQTT is unavailable and flushed on reconnect
+- **Health check endpoint**: HTTP endpoint at `/health` for monitoring (port 8081)
+- **Prometheus metrics**: Metrics endpoint at `/metrics` (port 8080) with connection stats, message counts, and buffer size
+- **Multiple device support**: Configure multiple KM140F devices via `MONITOR_HOSTS` (comma-separated)
+- **Graceful degradation**: Data written to fallback file when MQTT is unavailable
+- **Structured logging**: JSON log format support via `LOG_FORMAT=json`
+- **Configuration validation**: Validates config at startup with helpful error messages
+- **Docker healthcheck**: Added HEALTHCHECK instruction to Dockerfile
+
+### Testing
+- Added integration tests with mock TCP server and MQTT broker
+- Added test coverage reporting with pytest-cov
+- Total tests: 28 (21 unit + 7 integration)
+
+### CI/CD
+- Updated CI pipeline to include coverage reporting
+- Uploads coverage reports as artifacts
+
 ## 2.0.3
 
 ### Bug Fixes

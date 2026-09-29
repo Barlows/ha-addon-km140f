@@ -14,6 +14,9 @@ import signal
 import socket
 import sys
 import time
+from collections import deque
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -21,7 +24,9 @@ import paho.mqtt.client as mqtt
 # ---------------------------------------------------------------------------
 # Configuration — override via environment variables
 # ---------------------------------------------------------------------------
-MONITOR_HOST = os.getenv("MONITOR_HOST", "192.168.0.204")
+# Support for multiple devices: MONITOR_HOSTS="192.168.0.204,192.168.0.205"
+MONITOR_HOSTS_STR = os.getenv("MONITOR_HOSTS", os.getenv("MONITOR_HOST", "192.168.0.204"))
+MONITOR_HOSTS = [h.strip() for h in MONITOR_HOSTS_STR.split(",") if h.strip()]
 MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
 
 MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
@@ -45,24 +50,66 @@ STALE_TIMEOUT = int(os.getenv("STALE_TIMEOUT", "60"))
 # Throttle configuration (Debouncing)
 THROTTLE_HEARTBEAT_INTERVAL = 10.0
 
+# Data buffering
+BUFFER_MAX_SIZE = int(os.getenv("BUFFER_MAX_SIZE", "1000"))
+ENABLE_METRICS = os.getenv("ENABLE_METRICS", "false").lower() in ("true", "1", "yes")
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8080"))
+ENABLE_HEALTH_CHECK = os.getenv("ENABLE_HEALTH_CHECK", "true").lower() in ("true", "1", "yes")
+HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "8081"))
+
 
 class BridgeState:
     """Encapsulates mutable bridge state for better testability."""
 
     def __init__(self) -> None:
         self.tcp_connected: bool = False
+        self.mqtt_connected: bool = False
         self.last_published_values: dict[str, Any] = {}
         self.last_heartbeat_time: float = 0.0
+        self.last_data_time: float = 0.0
+        self.metrics: dict[str, Any] = {
+            "tcp_reconnects": 0,
+            "mqtt_reconnects": 0,
+            "messages_published": 0,
+            "messages_dropped": 0,
+            "buffer_size": 0,
+            "uptime_seconds": 0.0,
+        }
 
 
 # Global state instance
 STATE = BridgeState()
 TCP_CONNECTED = STATE.tcp_connected  # Backwards compatibility
 
-logging.basicConfig(
-    level=os.getenv("LOG_LEVEL", "INFO").upper(),
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+# Data buffer for MQTT outage resilience
+DATA_BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX_SIZE)
+
+LOG_FORMAT = os.getenv("LOG_FORMAT", "text").lower()
+
+if LOG_FORMAT == "json":
+    class JSONFormatter(logging.Formatter):
+        def format(self, record: logging.LogRecord) -> str:
+            log_data = {
+                "timestamp": self.formatTime(record),
+                "level": record.levelname,
+                "message": record.getMessage(),
+                "logger": record.name,
+            }
+            if record.exc_info:
+                log_data["exception"] = self.formatException(record.exc_info)
+            return json.dumps(log_data)
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(message)s",
+    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(JSONFormatter())
+    logging.getLogger().handlers = [handler]
+else:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s [%(levelname)s] %(message)s",
+    )
 log = logging.getLogger("km140f")
 
 DEVICE_INFO = {
@@ -227,9 +274,40 @@ def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
             should_publish = True
 
     if should_publish:
-        result = mq.publish(state_topic("state"), json.dumps(STATE.last_published_values), retain=True)
+        payload = json.dumps(STATE.last_published_values)
+        result = mq.publish(state_topic("state"), payload, retain=True)
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
-            log.warning("Failed to publish state: rc=%s", result.rc)
+            log.warning("Failed to publish state: rc=%s — buffering for later", result.rc)
+            DATA_BUFFER.append({"topic": state_topic("state"), "payload": payload, "retain": True})
+            STATE.metrics["messages_dropped"] += 1
+        else:
+            STATE.metrics["messages_published"] += 1
+            # Flush buffer if we have data queued
+            _flush_buffer(mq)
+
+
+def _flush_buffer(mq: mqtt.Client) -> None:
+    """Flush buffered messages when MQTT connection is restored."""
+    while DATA_BUFFER:
+        msg = DATA_BUFFER[0]
+        result = mq.publish(msg["topic"], msg["payload"], retain=msg["retain"])
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            log.warning("Failed to flush buffered message: rc=%s", result.rc)
+            break
+        DATA_BUFFER.popleft()
+        log.debug("Flushed buffered message: %s", msg["topic"])
+
+
+def _write_to_fallback_file(data: dict[str, Any]) -> None:
+    """Write data to fallback file when MQTT is unavailable."""
+    fallback_path = os.getenv("FALLBACK_FILE_PATH", "/data/km140f_fallback.jsonl")
+    try:
+        os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
+        with open(fallback_path, "a") as f:
+            f.write(json.dumps(data) + "\n")
+        log.debug("Wrote data to fallback file: %s", fallback_path)
+    except OSError as exc:
+        log.warning("Failed to write to fallback file: %s", exc)
 
 def parse_a(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 6:
@@ -302,23 +380,53 @@ def parse_line(line: str) -> dict[str, Any] | None:
     log.debug("Ignoring line: %r", line)
     return None
 
+def validate_config() -> list[str]:
+    """Validate configuration and return list of errors."""
+    errors = []
+    if not MONITOR_HOSTS:
+        errors.append("MONITOR_HOSTS cannot be empty")
+    if not (1 <= MONITOR_PORT <= 65535):
+        errors.append(f"MONITOR_PORT must be between 1 and 65535, got {MONITOR_PORT}")
+    if not (1 <= MQTT_PORT <= 65535):
+        errors.append(f"MQTT_PORT must be between 1 and 65535, got {MQTT_PORT}")
+    if POLL_C_INTERVAL < 1:
+        errors.append(f"POLL_C_INTERVAL must be at least 1 second, got {POLL_C_INTERVAL}")
+    if RECONNECT_DELAY < 1:
+        errors.append(f"RECONNECT_DELAY must be at least 1 second, got {RECONNECT_DELAY}")
+    if SOCKET_TIMEOUT < 1:
+        errors.append(f"SOCKET_TIMEOUT must be at least 1 second, got {SOCKET_TIMEOUT}")
+    if STALE_TIMEOUT < SOCKET_TIMEOUT:
+        errors.append(f"STALE_TIMEOUT ({STALE_TIMEOUT}) should be >= SOCKET_TIMEOUT ({SOCKET_TIMEOUT})")
+    return errors
+
+
 def tcp_loop(mq: mqtt.Client) -> None:
+    """Main TCP loop supporting multiple devices."""
+    reconnect_delay = RECONNECT_DELAY
+
+    while True:
+        for host in MONITOR_HOSTS:
+            _tcp_loop_single(mq, host, MONITOR_PORT, reconnect_delay)
+            reconnect_delay = RECONNECT_DELAY  # Reset after each device attempt
+
+
+def _tcp_loop_single(mq: mqtt.Client, host: str, port: int, reconnect_delay: int) -> None:
+    """Handle TCP connection for a single device."""
     last_c_request = 0.0
     last_data_time = 0.0
-    reconnect_delay = RECONNECT_DELAY
 
     while True:
         sock = None
         buffer_bytes = b""
 
         try:
-            log.info("Connecting to monitor at %s:%d", MONITOR_HOST, MONITOR_PORT)
-            sock = socket.create_connection((MONITOR_HOST, MONITOR_PORT), timeout=10)
+            log.info("Connecting to monitor at %s:%d", host, port)
+            sock = socket.create_connection((host, port), timeout=10)
             sock.settimeout(SOCKET_TIMEOUT)
             
             STATE.tcp_connected = True
+            STATE.metrics["tcp_reconnects"] += 1
             last_data_time = time.monotonic()
-            reconnect_delay = RECONNECT_DELAY
             publish_availability(mq, True)
             log.info("Bridge status is now ONLINE")
 
@@ -365,7 +473,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
 
         except (OSError, ConnectionError, ValueError) as exc:
             STATE.tcp_connected = False
-            log.error("TCP error: %s; reconnecting in %ds", exc, reconnect_delay)
+            log.error("TCP error for %s: %s; reconnecting in %ds", host, exc, reconnect_delay)
             publish_availability(mq, False)
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, MAX_RECONNECT_DELAY)
@@ -391,18 +499,111 @@ def setup_signal_handlers(mq: mqtt.Client) -> None:
     signal.signal(signal.SIGTERM, handle_exit)
     signal.signal(signal.SIGINT, handle_exit)
 
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Simple HTTP health check endpoint."""
+
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            status = 200 if STATE.tcp_connected and STATE.mqtt_connected else 503
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            response = {
+                "status": "healthy" if status == 200 else "unhealthy",
+                "tcp_connected": STATE.tcp_connected,
+                "mqtt_connected": STATE.mqtt_connected,
+                "buffer_size": len(DATA_BUFFER),
+                "uptime": time.monotonic() - STATE.metrics["uptime_seconds"] if STATE.metrics["uptime_seconds"] > 0 else 0,
+            }
+            self.wfile.write(json.dumps(response).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass  # Suppress default logging
+
+
+def start_health_check_server() -> None:
+    """Start the health check HTTP server in a background thread."""
+    try:
+        server = HTTPServer(("0.0.0.0", HEALTH_CHECK_PORT), HealthCheckHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        log.info("Health check server started on port %d", HEALTH_CHECK_PORT)
+    except OSError as exc:
+        log.warning("Failed to start health check server: %s", exc)
+
+
+def start_metrics_server() -> None:
+    """Start the Prometheus metrics HTTP server in a background thread."""
+    try:
+        server = HTTPServer(("0.0.0.0", METRICS_PORT), MetricsHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        log.info("Metrics server started on port %d", METRICS_PORT)
+    except OSError as exc:
+        log.warning("Failed to start metrics server: %s", exc)
+
+
+class MetricsHandler(BaseHTTPRequestHandler):
+    """Prometheus metrics endpoint."""
+
+    def do_GET(self) -> None:
+        if self.path == "/metrics":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            metrics_text = f"""# HELP km140f_tcp_connected TCP connection status
+# TYPE km140f_tcp_connected gauge
+km140f_tcp_connected {1 if STATE.tcp_connected else 0}
+# HELP km140f_mqtt_connected MQTT connection status
+# TYPE km140f_mqtt_connected gauge
+km140f_mqtt_connected {1 if STATE.mqtt_connected else 0}
+# HELP km140f_tcp_reconnects Total TCP reconnections
+# TYPE km140f_tcp_reconnects counter
+km140f_tcp_reconnects {STATE.metrics["tcp_reconnects"]}
+# HELP km140f_mqtt_reconnects Total MQTT reconnections
+# TYPE km140f_mqtt_reconnects counter
+km140f_mqtt_reconnects {STATE.metrics["mqtt_reconnects"]}
+# HELP km140f_messages_published Total messages published
+# TYPE km140f_messages_published counter
+km140f_messages_published {STATE.metrics["messages_published"]}
+# HELP km140f_messages_dropped Total messages dropped
+# TYPE km140f_messages_dropped counter
+km140f_messages_dropped {STATE.metrics["messages_dropped"]}
+# HELP km140f_buffer_size Current buffer size
+# TYPE km140f_buffer_size gauge
+km140f_buffer_size {len(DATA_BUFFER)}
+# HELP km140f_uptime_seconds Uptime in seconds
+# TYPE km140f_uptime_seconds gauge
+km140f_uptime_seconds {time.monotonic() - STATE.metrics["uptime_seconds"] if STATE.metrics["uptime_seconds"] > 0 else 0}
+"""
+            self.wfile.write(metrics_text.encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass  # Suppress default logging
+
 # Added properties parameter to support Paho MQTT VERSION2 compliance
 def on_connect(client: mqtt.Client, userdata: Any, flags: Any, rc: int, properties: Any = None) -> None:
     if rc == 0:
         log.info("MQTT connected")
+        STATE.mqtt_connected = True
+        STATE.metrics["mqtt_reconnects"] += 1
         publish_discovery(client)
         if STATE.tcp_connected:
             publish_availability(client, True)
+        _flush_buffer(client)
     else:
         log.error("MQTT connect failed: rc=%s", rc)
 
 # Added properties parameter to support Paho MQTT VERSION2 compliance
 def on_disconnect(client: mqtt.Client, userdata: Any, rc: int, properties: Any = None) -> None:
+    STATE.mqtt_connected = False
     if rc != 0:
         log.warning("MQTT disconnected unexpectedly: rc=%s — will auto-reconnect", rc)
     else:
@@ -428,6 +629,25 @@ def build_mqtt_client() -> mqtt.Client:
 
 def main() -> None:
     log.info("Starting Junctek KM140F TCP to MQTT bridge")
+    
+    # Validate configuration
+    config_errors = validate_config()
+    if config_errors:
+        for error in config_errors:
+            log.error("Configuration error: %s", error)
+        sys.exit(1)
+    
+    # Record start time for metrics
+    STATE.metrics["uptime_seconds"] = time.monotonic()
+    
+    # Start health check server
+    if ENABLE_HEALTH_CHECK:
+        start_health_check_server()
+    
+    # Start metrics server
+    if ENABLE_METRICS:
+        start_metrics_server()
+    
     mq = build_mqtt_client()
 
     while True:

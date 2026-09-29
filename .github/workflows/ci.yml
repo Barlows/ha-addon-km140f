@@ -25,7 +25,7 @@ jobs:
         run: ruff check .
 
       - name: Run mypy
-        run: mypy km140f/km140f.py
+        run: mypy --config-file mypy.ini km140f/km140f.py
 
   test:
     runs-on: ubuntu-latest
@@ -39,7 +39,13 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pytest paho-mqtt
+          pip install pytest pytest-cov paho-mqtt
 
-      - name: Run tests
-        run: pytest tests/ -v
+      - name: Run tests with coverage
+        run: pytest tests/ -v --cov=km140f --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
