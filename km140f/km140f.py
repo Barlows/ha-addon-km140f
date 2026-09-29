@@ -28,6 +28,8 @@ MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_USER = os.getenv("MQTT_USER", "km140f")
 MQTT_PASS = os.getenv("MQTT_PASS", "")
+MQTT_USE_TLS = os.getenv("MQTT_USE_TLS", "false").lower() in ("true", "1", "yes")
+MQTT_TLS_CA_CERT = os.getenv("MQTT_TLS_CA_CERT", "")
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
@@ -407,6 +409,13 @@ def build_mqtt_client() -> mqtt.Client:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=DEVICE_ID)
     if MQTT_USER:
         client.username_pw_set(MQTT_USER, MQTT_PASS)
+
+    if MQTT_USE_TLS:
+        if MQTT_TLS_CA_CERT:
+            client.tls_set(ca_certs=MQTT_TLS_CA_CERT)
+        else:
+            client.tls_set()
+        log.info("MQTT TLS enabled")
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
