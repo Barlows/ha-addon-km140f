@@ -338,7 +338,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
 
                 try:
                     chunk = sock.recv(512)
-                except socket.timeout:
+                except TimeoutError:
                     try:
                         sock.sendall(b":A\n")
                         continue
@@ -381,8 +381,8 @@ def setup_signal_handlers(mq: mqtt.Client) -> None:
             publish_availability(mq, False)
             mq.loop_stop()
             mq.disconnect()
-        except Exception:
-            pass
+        except (OSError, RuntimeError) as exc:
+            log.debug("Error during shutdown: %s", exc)
         log.info("Bridge exited cleanly.")
         sys.exit(0)
 
@@ -430,7 +430,7 @@ def main() -> None:
         try:
             mq.connect(MQTT_HOST, MQTT_PORT, keepalive=MQTT_KEEPALIVE)
             break
-        except Exception as exc:
+        except (OSError, ConnectionError) as exc:
             log.error("MQTT connect failed: %s; retrying in %ds", exc, RECONNECT_DELAY)
             time.sleep(RECONNECT_DELAY)
 

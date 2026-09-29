@@ -1,12 +1,29 @@
 # Changelog
 
-## 2.0.1
+## 2.0.0
 
-- Fix: protocol parsing now uses startswith for reliable frame matching
-- Fix: handle \r\n line endings from device
-- Fix: consistent documentation URLs and default values
-- Fix: MQTT callbacks and signal handlers have full type hints
-- Fix: extra protocol fields logged at debug level
+### Bug Fixes
+- Protocol parsing now uses `startswith` for reliable `:A=`/`:C=` frame matching
+- Handle `\r\n` line endings from device
+- Consistent documentation URLs and default values across README/DOCS/config
+- MQTT callbacks and signal handlers have full type hints
+- Extra protocol fields logged at debug level
+- Replace `socket.timeout` with builtin `TimeoutError`
+- Catch specific exceptions instead of blind `except Exception`
+- Signal handler logs errors instead of silent `try-except-pass`
+
+### New Features
+- **Staleness watchdog**: Reconnects if no data received for 60 seconds (configurable)
+- **Exponential backoff**: TCP reconnection delay doubles up to 5 minutes max
+- **MQTT TLS support**: Optional TLS encryption with custom CA certificate
+- **Full config exposure**: All settings (`sw_version`, `socket_timeout`, `mqtt_keepalive`) configurable via HA add-on UI
+- **BridgeState class**: Encapsulates mutable state for better testability
+- **Unit tests**: 21 tests covering all parsing functions
+- **CI/CD pipeline**: GitHub Actions with ruff, mypy, and pytest
+- **Project infrastructure**: `.gitignore`, `LICENSE`, issue templates, PR template
+
+### Breaking Changes
+- None — fully backward compatible with v1.0.0
 
 ## 1.0.1
 
