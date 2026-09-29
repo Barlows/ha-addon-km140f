@@ -35,8 +35,10 @@ SW_VERSION = os.getenv("SW_VERSION", "1.2.0")
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
+MAX_RECONNECT_DELAY = int(os.getenv("MAX_RECONNECT_DELAY", "300"))
 SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "15"))
 MQTT_KEEPALIVE = int(os.getenv("MQTT_KEEPALIVE", "60"))
+STALE_TIMEOUT = int(os.getenv("STALE_TIMEOUT", "60"))
 
 # Throttle configuration (Debouncing)
 THROTTLE_HEARTBEAT_INTERVAL = 10.0
@@ -291,6 +293,8 @@ def parse_line(line: str) -> dict[str, Any] | None:
 def tcp_loop(mq: mqtt.Client) -> None:
     global TCP_CONNECTED
     last_c_request = 0.0
+    last_data_time = 0.0
+    reconnect_delay = RECONNECT_DELAY
 
     while True:
         sock = None
@@ -302,14 +306,19 @@ def tcp_loop(mq: mqtt.Client) -> None:
             sock.settimeout(SOCKET_TIMEOUT)
             
             TCP_CONNECTED = True
-            log.info("Monitor connected. Pausing briefly for entity alignment...")
-            time.sleep(1.0)
-            
+            last_data_time = time.monotonic()
+            reconnect_delay = RECONNECT_DELAY
             publish_availability(mq, True)
             log.info("Bridge status is now ONLINE")
 
             while True:
                 now = time.monotonic()
+                
+                # Staleness watchdog: if no data received within STALE_TIMEOUT, reconnect
+                if now - last_data_time >= STALE_TIMEOUT:
+                    log.warning("No data received for %ds, reconnecting...", STALE_TIMEOUT)
+                    raise ConnectionError("Stale connection")
+                
                 if now - last_c_request >= POLL_C_INTERVAL:
                     try:
                         sock.sendall(b":C\n")
@@ -334,6 +343,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
                 if not chunk:
                     raise ConnectionResetError("Connection closed by monitor")
 
+                last_data_time = time.monotonic()
                 buffer_bytes += chunk
                 while b"\n" in buffer_bytes:
                     line_bytes, buffer_bytes = buffer_bytes.split(b"\n", 1)
@@ -342,11 +352,12 @@ def tcp_loop(mq: mqtt.Client) -> None:
                     if data:
                         publish_state_map_throttled(mq, data)
 
-        except Exception as exc:
+        except (OSError, ConnectionError, ValueError) as exc:
             TCP_CONNECTED = False
-            log.error("TCP error: %s; reconnecting in %ds", exc, RECONNECT_DELAY)
+            log.error("TCP error: %s; reconnecting in %ds", exc, reconnect_delay)
             publish_availability(mq, False)
-            time.sleep(RECONNECT_DELAY)
+            time.sleep(reconnect_delay)
+            reconnect_delay = min(reconnect_delay * 2, MAX_RECONNECT_DELAY)
         finally:
             if sock is not None:
                 try:
