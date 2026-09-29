@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+### Bug Fixes
+- Add type annotations to SENSORS and TEXT_SENSORS for mypy compliance
+- Fixes CI pipeline failure in mypy type checking
+
 ## 2.0.0
 
 ### Bug Fixes
