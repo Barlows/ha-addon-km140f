@@ -1,17 +1,14 @@
 """Integration tests for KM140F bridge with mock TCP server and MQTT broker."""
 
-import json
 import socket
 import sys
 import threading
-import time
+from collections import deque
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "km140f"))
 
-from km140f import parse_line, parse_a, parse_c, BridgeState, DATA_BUFFER
+from km140f import BridgeState, parse_line
 
 
 class MockTCPServer:
@@ -39,8 +36,8 @@ class MockTCPServer:
             try:
                 self.server.settimeout(1.0)
                 try:
-                    conn, addr = self.server.accept()
-                except socket.timeout:
+                    conn, _addr = self.server.accept()
+                except TimeoutError:
                     continue
                 with conn:
                     while self.running:
@@ -91,8 +88,8 @@ class MockMQTTBroker:
             try:
                 self.server.settimeout(1.0)
                 try:
-                    conn, addr = self.server.accept()
-                except socket.timeout:
+                    conn, _addr = self.server.accept()
+                except TimeoutError:
                     continue
                 with conn:
                     while self.running:
@@ -177,7 +174,6 @@ class TestIntegration:
 
     def test_data_buffer(self):
         """Test data buffering."""
-        from collections import deque
         buffer = deque(maxlen=10)
         buffer.append({"test": "data"})
         assert len(buffer) == 1
