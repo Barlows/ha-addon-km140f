@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.2
+
+### Bug Fixes
+- Add return type annotations to all test functions (mypy compliance)
+- Add type annotations for class variables in test_integration.py
+- Fix ruff-format formatting in km140f.py and test files
+
 ## 2.2.1
 
 ### Bug Fixes

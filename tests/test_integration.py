@@ -5,6 +5,7 @@ import sys
 import threading
 from collections import deque
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "km140f"))
 
@@ -14,7 +15,7 @@ from km140f import BridgeState, parse_line
 class MockTCPServer:
     """Mock TCP server that simulates KM140F device."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 0):
+    def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
         self.host = host
         self.port = port
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -23,8 +24,8 @@ class MockTCPServer:
         self.server.listen(1)
         self.port = self.server.getsockname()[1]
         self.running = False
-        self.thread = None
-        self.received_data = []
+        self.thread: threading.Thread | None = None
+        self.received_data: list[bytes] = []
 
     def start(self) -> None:
         self.running = True
@@ -66,7 +67,7 @@ class MockTCPServer:
 class MockMQTTBroker:
     """Simple mock MQTT broker for testing."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 0):
+    def __init__(self, host: str = "127.0.0.1", port: int = 0) -> None:
         self.host = host
         self.port = port
         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -75,8 +76,8 @@ class MockMQTTBroker:
         self.server.listen(5)
         self.port = self.server.getsockname()[1]
         self.running = False
-        self.thread = None
-        self.published_messages = []
+        self.thread: threading.Thread | None = None
+        self.published_messages: list[bytes] = []
 
     def start(self) -> None:
         self.running = True
@@ -118,7 +119,7 @@ class MockMQTTBroker:
 class TestIntegration:
     """Integration tests with mock servers."""
 
-    def test_mock_tcp_server(self):
+    def test_mock_tcp_server(self) -> None:
         """Test that mock TCP server works correctly."""
         server = MockTCPServer()
         server.start()
@@ -132,7 +133,7 @@ class TestIntegration:
         finally:
             server.stop()
 
-    def test_mock_mqtt_broker(self):
+    def test_mock_mqtt_broker(self) -> None:
         """Test that mock MQTT broker works correctly."""
         broker = MockMQTTBroker()
         broker.start()
@@ -147,7 +148,7 @@ class TestIntegration:
         finally:
             broker.stop()
 
-    def test_parse_line_with_mock_data(self):
+    def test_parse_line_with_mock_data(self) -> None:
         """Test parsing with data from mock server format."""
         server = MockTCPServer()
         server.start()
@@ -164,7 +165,7 @@ class TestIntegration:
         finally:
             server.stop()
 
-    def test_bridge_state(self):
+    def test_bridge_state(self) -> None:
         """Test BridgeState class."""
         state = BridgeState()
         assert state.tcp_connected is False
@@ -172,9 +173,9 @@ class TestIntegration:
         assert state.last_published_values == {}
         assert state.metrics["tcp_reconnects"] == 0
 
-    def test_data_buffer(self):
+    def test_data_buffer(self) -> None:
         """Test data buffering."""
-        buffer = deque(maxlen=10)
+        buffer: deque[dict[str, Any]] = deque(maxlen=10)
         buffer.append({"test": "data"})
         assert len(buffer) == 1
         assert buffer[0]["test"] == "data"
@@ -183,14 +184,16 @@ class TestIntegration:
 class TestConfigurationValidation:
     """Test configuration validation."""
 
-    def test_validate_config_default(self):
+    def test_validate_config_default(self) -> None:
         """Test that default config passes validation."""
         from km140f import validate_config
+
         errors = validate_config()
         assert isinstance(errors, list)
 
-    def test_validate_config_returns_list(self):
+    def test_validate_config_returns_list(self) -> None:
         """Test that validate_config returns a list."""
         from km140f import validate_config
+
         result = validate_config()
         assert isinstance(result, list)

@@ -26,7 +26,9 @@ import paho.mqtt.client as mqtt
 # Configuration — override via environment variables
 # ---------------------------------------------------------------------------
 # Support for multiple devices: MONITOR_HOSTS="192.168.0.204,192.168.0.205"
-MONITOR_HOSTS_STR = os.getenv("MONITOR_HOSTS", os.getenv("MONITOR_HOST", "192.168.0.204"))
+MONITOR_HOSTS_STR = os.getenv(
+    "MONITOR_HOSTS", os.getenv("MONITOR_HOST", "192.168.0.204")
+)
 MONITOR_HOSTS = [h.strip() for h in MONITOR_HOSTS_STR.split(",") if h.strip()]
 MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
 
@@ -55,11 +57,19 @@ THROTTLE_HEARTBEAT_INTERVAL = 10.0
 BUFFER_MAX_SIZE = int(os.getenv("BUFFER_MAX_SIZE", "1000"))
 ENABLE_METRICS = os.getenv("ENABLE_METRICS", "false").lower() in ("true", "1", "yes")
 METRICS_PORT = int(os.getenv("METRICS_PORT", "8080"))
-ENABLE_HEALTH_CHECK = os.getenv("ENABLE_HEALTH_CHECK", "true").lower() in ("true", "1", "yes")
+ENABLE_HEALTH_CHECK = os.getenv("ENABLE_HEALTH_CHECK", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "8081"))
 
 # Data persistence
-ENABLE_PERSISTENCE = os.getenv("ENABLE_PERSISTENCE", "true").lower() in ("true", "1", "yes")
+ENABLE_PERSISTENCE = os.getenv("ENABLE_PERSISTENCE", "true").lower() in (
+    "true",
+    "1",
+    "yes",
+)
 DB_PATH = os.getenv("DB_PATH", "/data/km140f.db")
 DB_RETENTION_DAYS = int(os.getenv("DB_RETENTION_DAYS", "30"))
 
@@ -195,6 +205,7 @@ DB: DataPersistence | None = None
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text").lower()
 
 if LOG_FORMAT == "json":
+
     class JSONFormatter(logging.Formatter):
         def format(self, record: logging.LogRecord) -> str:
             log_data = {
@@ -206,6 +217,7 @@ if LOG_FORMAT == "json":
             if record.exc_info:
                 log_data["exception"] = self.formatException(record.exc_info)
             return json.dumps(log_data)
+
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(message)s",
@@ -321,11 +333,14 @@ TEXT_SENSORS: list[dict[str, Any]] = [
     },
 ]
 
+
 def discovery_topic(component: str, unique_id: str) -> str:
     return f"homeassistant/{component}/{DEVICE_ID}/{unique_id}/config"
 
+
 def state_topic(key: str) -> str:
     return f"{DEVICE_ID}/{key}"
+
 
 def publish_discovery(mq: mqtt.Client) -> None:
     for sensor in SENSORS:
@@ -347,7 +362,9 @@ def publish_discovery(mq: mqtt.Client) -> None:
         if sensor.get("icon"):
             payload["icon"] = sensor["icon"]
 
-        mq.publish(discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True)
+        mq.publish(
+            discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True
+        )
 
     for sensor in TEXT_SENSORS:
         payload = {
@@ -361,12 +378,18 @@ def publish_discovery(mq: mqtt.Client) -> None:
             "payload_available": "online",
             "payload_not_available": "offline",
         }
-        mq.publish(discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True)
+        mq.publish(
+            discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True
+        )
 
     log.info("Published consolidated MQTT discovery configurations")
 
+
 def publish_availability(mq: mqtt.Client, online: bool) -> None:
-    mq.publish(state_topic("availability"), "online" if online else "offline", retain=True)
+    mq.publish(
+        state_topic("availability"), "online" if online else "offline", retain=True
+    )
+
 
 def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
     now = time.monotonic()
@@ -385,8 +408,12 @@ def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
         payload = json.dumps(STATE.last_published_values)
         result = mq.publish(state_topic("state"), payload, retain=True)
         if result.rc != mqtt.MQTT_ERR_SUCCESS:
-            log.warning("Failed to publish state: rc=%s — buffering for later", result.rc)
-            DATA_BUFFER.append({"topic": state_topic("state"), "payload": payload, "retain": True})
+            log.warning(
+                "Failed to publish state: rc=%s — buffering for later", result.rc
+            )
+            DATA_BUFFER.append(
+                {"topic": state_topic("state"), "payload": payload, "retain": True}
+            )
             STATE.metrics["messages_dropped"] += 1
         else:
             STATE.metrics["messages_published"] += 1
@@ -472,41 +499,41 @@ class WebUIHandler(BaseHTTPRequestHandler):
     <h1>{DEVICE_NAME}</h1>
     <div class="card">
         <div class="metric">
-            <div class="value">{STATE.last_published_values.get('voltage', '—')}</div>
+            <div class="value">{STATE.last_published_values.get("voltage", "—")}</div>
             <div class="label">Voltage (V)</div>
         </div>
         <div class="metric">
-            <div class="value">{STATE.last_published_values.get('current', '—')}</div>
+            <div class="value">{STATE.last_published_values.get("current", "—")}</div>
             <div class="label">Current (A)</div>
         </div>
         <div class="metric">
-            <div class="value">{STATE.last_published_values.get('power', '—')}</div>
+            <div class="value">{STATE.last_published_values.get("power", "—")}</div>
             <div class="label">Power (W)</div>
         </div>
         <div class="metric">
-            <div class="value">{STATE.last_published_values.get('soc', '—')}</div>
+            <div class="value">{STATE.last_published_values.get("soc", "—")}</div>
             <div class="label">State of Charge (%)</div>
         </div>
     </div>
     <div class="card">
         <div class="metric">
-            <div class="value">{STATE.last_published_values.get('remaining_capacity', '—')}</div>
+            <div class="value">{STATE.last_published_values.get("remaining_capacity", "—")}</div>
             <div class="label">Remaining Capacity (Ah)</div>
         </div>
         <div class="metric">
-            <div class="value">{STATE.last_published_values.get('time_remaining', '—')}</div>
+            <div class="value">{STATE.last_published_values.get("time_remaining", "—")}</div>
             <div class="label">Time Remaining (min)</div>
         </div>
         <div class="metric">
-            <div class="value">{STATE.last_published_values.get('status', '—')}</div>
+            <div class="value">{STATE.last_published_values.get("status", "—")}</div>
             <div class="label">Status</div>
         </div>
     </div>
     <div class="card">
-        <p>TCP: <span class="status {'online' if STATE.tcp_connected else 'offline'}">{'Online' if STATE.tcp_connected else 'Offline'}</span></p>
-        <p>MQTT: <span class="status {'online' if STATE.mqtt_connected else 'offline'}">{'Online' if STATE.mqtt_connected else 'Offline'}</span></p>
+        <p>TCP: <span class="status {"online" if STATE.tcp_connected else "offline"}">{"Online" if STATE.tcp_connected else "Offline"}</span></p>
+        <p>MQTT: <span class="status {"online" if STATE.mqtt_connected else "offline"}">{"Online" if STATE.mqtt_connected else "Offline"}</span></p>
         <p>Buffer: {len(DATA_BUFFER)} messages</p>
-        <p>Uptime: {time.monotonic() - STATE.metrics['uptime_seconds']:.0f}s</p>
+        <p>Uptime: {time.monotonic() - STATE.metrics["uptime_seconds"]:.0f}s</p>
     </div>
 </body>
 </html>"""
@@ -533,6 +560,7 @@ def start_web_ui_server() -> None:
         log.info("Web UI server started on port %d", WEB_UI_PORT)
     except OSError as exc:
         log.warning("Failed to start web UI server: %s", exc)
+
 
 def parse_a(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 6:
@@ -575,6 +603,7 @@ def parse_a(fields: list[str]) -> dict[str, Any] | None:
         log.warning("parse_a error: %s | fields=%s", exc, fields)
         return None
 
+
 def parse_c(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 2:
         log.warning("Short C frame: %s", fields)
@@ -588,6 +617,7 @@ def parse_c(fields: list[str]) -> dict[str, Any] | None:
     except ValueError as exc:
         log.warning("parse_c error: %s | fields=%s", exc, fields)
         return None
+
 
 def parse_line(line: str) -> dict[str, Any] | None:
     line = line.strip()
@@ -605,6 +635,7 @@ def parse_line(line: str) -> dict[str, Any] | None:
     log.debug("Ignoring line: %r", line)
     return None
 
+
 def validate_config() -> list[str]:
     """Validate configuration and return list of errors."""
     errors = []
@@ -615,13 +646,19 @@ def validate_config() -> list[str]:
     if not (1 <= MQTT_PORT <= 65535):
         errors.append(f"MQTT_PORT must be between 1 and 65535, got {MQTT_PORT}")
     if POLL_C_INTERVAL < 1:
-        errors.append(f"POLL_C_INTERVAL must be at least 1 second, got {POLL_C_INTERVAL}")
+        errors.append(
+            f"POLL_C_INTERVAL must be at least 1 second, got {POLL_C_INTERVAL}"
+        )
     if RECONNECT_DELAY < 1:
-        errors.append(f"RECONNECT_DELAY must be at least 1 second, got {RECONNECT_DELAY}")
+        errors.append(
+            f"RECONNECT_DELAY must be at least 1 second, got {RECONNECT_DELAY}"
+        )
     if SOCKET_TIMEOUT < 1:
         errors.append(f"SOCKET_TIMEOUT must be at least 1 second, got {SOCKET_TIMEOUT}")
     if STALE_TIMEOUT < SOCKET_TIMEOUT:
-        errors.append(f"STALE_TIMEOUT ({STALE_TIMEOUT}) should be >= SOCKET_TIMEOUT ({SOCKET_TIMEOUT})")
+        errors.append(
+            f"STALE_TIMEOUT ({STALE_TIMEOUT}) should be >= SOCKET_TIMEOUT ({SOCKET_TIMEOUT})"
+        )
     return errors
 
 
@@ -635,7 +672,9 @@ def tcp_loop(mq: mqtt.Client) -> None:
             reconnect_delay = RECONNECT_DELAY  # Reset after each device attempt
 
 
-def _tcp_loop_single(mq: mqtt.Client, host: str, port: int, reconnect_delay: int) -> None:
+def _tcp_loop_single(
+    mq: mqtt.Client, host: str, port: int, reconnect_delay: int
+) -> None:
     """Handle TCP connection for a single device."""
     last_c_request = 0.0
     last_data_time = 0.0
@@ -648,7 +687,7 @@ def _tcp_loop_single(mq: mqtt.Client, host: str, port: int, reconnect_delay: int
             log.info("Connecting to monitor at %s:%d", host, port)
             sock = socket.create_connection((host, port), timeout=10)
             sock.settimeout(SOCKET_TIMEOUT)
-            
+
             STATE.tcp_connected = True
             STATE.metrics["tcp_reconnects"] += 1
             last_data_time = time.monotonic()
@@ -657,12 +696,14 @@ def _tcp_loop_single(mq: mqtt.Client, host: str, port: int, reconnect_delay: int
 
             while True:
                 now = time.monotonic()
-                
+
                 # Staleness watchdog: if no data received within STALE_TIMEOUT, reconnect
                 if now - last_data_time >= STALE_TIMEOUT:
-                    log.warning("No data received for %ds, reconnecting...", STALE_TIMEOUT)
+                    log.warning(
+                        "No data received for %ds, reconnecting...", STALE_TIMEOUT
+                    )
                     raise ConnectionError("Stale connection")
-                
+
                 if now - last_c_request >= POLL_C_INTERVAL:
                     try:
                         sock.sendall(b":C\n")
@@ -701,7 +742,9 @@ def _tcp_loop_single(mq: mqtt.Client, host: str, port: int, reconnect_delay: int
 
         except (OSError, ConnectionError, ValueError) as exc:
             STATE.tcp_connected = False
-            log.error("TCP error for %s: %s; reconnecting in %ds", host, exc, reconnect_delay)
+            log.error(
+                "TCP error for %s: %s; reconnecting in %ds", host, exc, reconnect_delay
+            )
             publish_availability(mq, False)
             time.sleep(reconnect_delay)
             reconnect_delay = min(reconnect_delay * 2, MAX_RECONNECT_DELAY)
@@ -711,6 +754,7 @@ def _tcp_loop_single(mq: mqtt.Client, host: str, port: int, reconnect_delay: int
                     sock.close()
                 except OSError:
                     pass
+
 
 def setup_signal_handlers(mq: mqtt.Client) -> None:
     def handle_exit(signum: int, frame: Any) -> None:
@@ -739,7 +783,9 @@ def reload_config() -> None:
     global DEVICE_ID, DEVICE_NAME, POLL_C_INTERVAL, RECONNECT_DELAY
     global SOCKET_TIMEOUT, STALE_TIMEOUT, BUFFER_MAX_SIZE
 
-    MONITOR_HOSTS_STR = os.getenv("MONITOR_HOSTS", os.getenv("MONITOR_HOST", "192.168.0.204"))
+    MONITOR_HOSTS_STR = os.getenv(
+        "MONITOR_HOSTS", os.getenv("MONITOR_HOST", "192.168.0.204")
+    )
     MONITOR_HOSTS = [h.strip() for h in MONITOR_HOSTS_STR.split(",") if h.strip()]
     MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
     MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
@@ -754,7 +800,12 @@ def reload_config() -> None:
     STALE_TIMEOUT = int(os.getenv("STALE_TIMEOUT", "60"))
     BUFFER_MAX_SIZE = int(os.getenv("BUFFER_MAX_SIZE", "1000"))
 
-    log.info("Configuration reloaded: %d monitor(s), MQTT %s:%d", len(MONITOR_HOSTS), MQTT_HOST, MQTT_PORT)
+    log.info(
+        "Configuration reloaded: %d monitor(s), MQTT %s:%d",
+        len(MONITOR_HOSTS),
+        MQTT_HOST,
+        MQTT_PORT,
+    )
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -771,7 +822,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 "tcp_connected": STATE.tcp_connected,
                 "mqtt_connected": STATE.mqtt_connected,
                 "buffer_size": len(DATA_BUFFER),
-                "uptime": time.monotonic() - STATE.metrics["uptime_seconds"] if STATE.metrics["uptime_seconds"] > 0 else 0,
+                "uptime": time.monotonic() - STATE.metrics["uptime_seconds"]
+                if STATE.metrics["uptime_seconds"] > 0
+                else 0,
             }
             self.wfile.write(json.dumps(response).encode())
         else:
@@ -845,8 +898,11 @@ km140f_uptime_seconds {time.monotonic() - STATE.metrics["uptime_seconds"] if STA
     def log_message(self, format: str, *args: Any) -> None:
         pass  # Suppress default logging
 
+
 # Added properties parameter to support Paho MQTT VERSION2 compliance
-def on_connect(client: mqtt.Client, userdata: Any, flags: Any, rc: int, properties: Any = None) -> None:
+def on_connect(
+    client: mqtt.Client, userdata: Any, flags: Any, rc: int, properties: Any = None
+) -> None:
     if rc == 0:
         log.info("MQTT connected")
         STATE.mqtt_connected = True
@@ -858,13 +914,17 @@ def on_connect(client: mqtt.Client, userdata: Any, flags: Any, rc: int, properti
     else:
         log.error("MQTT connect failed: rc=%s", rc)
 
+
 # Added properties parameter to support Paho MQTT VERSION2 compliance
-def on_disconnect(client: mqtt.Client, userdata: Any, rc: int, properties: Any = None) -> None:
+def on_disconnect(
+    client: mqtt.Client, userdata: Any, rc: int, properties: Any = None
+) -> None:
     STATE.mqtt_connected = False
     if rc != 0:
         log.warning("MQTT disconnected unexpectedly: rc=%s — will auto-reconnect", rc)
     else:
         log.info("MQTT disconnected cleanly")
+
 
 def build_mqtt_client() -> mqtt.Client:
     # Swapped cleanly over to CallbackAPIVersion.VERSION2
@@ -883,6 +943,7 @@ def build_mqtt_client() -> mqtt.Client:
     client.on_disconnect = on_disconnect
     client.will_set(state_topic("availability"), "offline", retain=True)
     return client
+
 
 def main() -> None:
     global DB
@@ -929,6 +990,7 @@ def main() -> None:
     mq.loop_start()
     setup_signal_handlers(mq)
     tcp_loop(mq)
+
 
 if __name__ == "__main__":
     main()

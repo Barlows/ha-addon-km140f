@@ -12,7 +12,7 @@ from km140f import parse_a, parse_c, parse_line
 class TestParseA:
     """Tests for parse_a function."""
 
-    def test_basic_charging(self):
+    def test_basic_charging(self) -> None:
         result = parse_a(["1200", "5000", "1", "120", "80000", "1000"])
         assert result is not None
         assert result["voltage"] == 12.0
@@ -24,7 +24,7 @@ class TestParseA:
         assert result["soc"] == 80.0
         assert result["status"] == "Charging"
 
-    def test_basic_discharging(self):
+    def test_basic_discharging(self) -> None:
         result = parse_a(["1200", "5000", "0", "120", "80000", "1000"])
         assert result is not None
         assert result["voltage"] == 12.0
@@ -32,31 +32,33 @@ class TestParseA:
         assert result["power"] == -60.0
         assert result["status"] == "Discharging"
 
-    def test_zero_capacity(self):
+    def test_zero_capacity(self) -> None:
         result = parse_a(["1200", "0", "1", "0", "0", "0"])
         assert result is not None
         assert result["soc"] == 0.0
 
-    def test_soc_clamped_high(self):
+    def test_soc_clamped_high(self) -> None:
         result = parse_a(["1200", "0", "1", "0", "150000", "1000"])
         assert result is not None
         assert result["soc"] == 100.0
 
-    def test_soc_clamped_low(self):
+    def test_soc_clamped_low(self) -> None:
         result = parse_a(["1200", "0", "0", "0", "0", "1000"])
         assert result is not None
         assert result["soc"] == 0.0
 
-    def test_short_frame(self):
+    def test_short_frame(self) -> None:
         result = parse_a(["1200", "5000"])
         assert result is None
 
-    def test_invalid_values(self):
+    def test_invalid_values(self) -> None:
         result = parse_a(["abc", "def", "1", "120", "80000", "1000"])
         assert result is None
 
-    def test_extra_fields_ignored(self):
-        result = parse_a(["1200", "5000", "1", "120", "80000", "1000", "extra", "fields"])
+    def test_extra_fields_ignored(self) -> None:
+        result = parse_a(
+            ["1200", "5000", "1", "120", "80000", "1000", "extra", "fields"]
+        )
         assert result is not None
         assert result["voltage"] == 12.0
 
@@ -64,23 +66,23 @@ class TestParseA:
 class TestParseC:
     """Tests for parse_c function."""
 
-    def test_basic(self):
+    def test_basic(self) -> None:
         result = parse_c(["12345", "67890"])
         assert result is not None
         assert result["charge_kwh"] == 12.345
         assert result["discharge_kwh"] == 67.89
 
-    def test_zero_values(self):
+    def test_zero_values(self) -> None:
         result = parse_c(["0", "0"])
         assert result is not None
         assert result["charge_kwh"] == 0.0
         assert result["discharge_kwh"] == 0.0
 
-    def test_short_frame(self):
+    def test_short_frame(self) -> None:
         result = parse_c(["12345"])
         assert result is None
 
-    def test_invalid_values(self):
+    def test_invalid_values(self) -> None:
         result = parse_c(["abc", "def"])
         assert result is None
 
@@ -88,42 +90,42 @@ class TestParseC:
 class TestParseLine:
     """Tests for parse_line function."""
 
-    def test_a_line(self):
+    def test_a_line(self) -> None:
         result = parse_line(":A=1200,5000,1,120,80000,1000")
         assert result is not None
         assert result["voltage"] == 12.0
 
-    def test_c_line(self):
+    def test_c_line(self) -> None:
         result = parse_line(":C=12345,67890")
         assert result is not None
         assert result["charge_kwh"] == 12.345
 
-    def test_empty_line(self):
+    def test_empty_line(self) -> None:
         result = parse_line("")
         assert result is None
 
-    def test_whitespace_only(self):
+    def test_whitespace_only(self) -> None:
         result = parse_line("   ")
         assert result is None
 
-    def test_unknown_line(self):
+    def test_unknown_line(self) -> None:
         result = parse_line(":X=123,456")
         assert result is None
 
-    def test_a_in_middle_not_matched(self):
+    def test_a_in_middle_not_matched(self) -> None:
         result = parse_line("prefix:A=1200,5000,1,120,80000,1000")
         assert result is None
 
-    def test_c_in_middle_not_matched(self):
+    def test_c_in_middle_not_matched(self) -> None:
         result = parse_line("prefix:C=12345,67890")
         assert result is None
 
-    def test_a_with_trailing_comma(self):
+    def test_a_with_trailing_comma(self) -> None:
         result = parse_line(":A=1200,5000,1,120,80000,1000,")
         assert result is not None
         assert result["voltage"] == 12.0
 
-    def test_c_with_trailing_comma(self):
+    def test_c_with_trailing_comma(self) -> None:
         result = parse_line(":C=12345,67890,")
         assert result is not None
         assert result["charge_kwh"] == 12.345
