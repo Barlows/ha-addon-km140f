@@ -73,6 +73,14 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 - **MQTT TLS support**: Optional TLS encryption for secure MQTT connections
 - **Robust parsing**: Handles `\r\n` line endings, extra fields, and malformed data gracefully
 - **Clean shutdown**: Properly publishes offline status on SIGTERM/SIGINT
+- **Data buffering**: Messages buffered when MQTT is down, flushed on reconnect
+- **Health check endpoint**: HTTP endpoint at `/health` (port 8081)
+- **Prometheus metrics**: Metrics at `/metrics` (port 8080)
+- **Multiple device support**: Configure multiple KM140F devices via `MONITOR_HOSTS`
+- **Graceful degradation**: Data written to fallback file when MQTT unavailable
+- **Structured logging**: JSON log format support via `LOG_FORMAT=json`
+- **Configuration validation**: Validates at startup with helpful errors
+- **Docker healthcheck**: `HEALTHCHECK` instruction in Dockerfile
 
 ---
 
@@ -94,6 +102,11 @@ Direction: `0` = discharging, `1` = charging.
 
 | Version | Description |
 |---------|-------------|
+| [v2.1.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.1.1) | Ruff cleanup in tests |
+| [v2.1.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.1.0) | Data buffering, health checks, metrics, multi-device support |
+| [v2.0.3](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.0.3) | Docker build fix |
+| [v2.0.2](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.0.2) | Reliability & developer experience |
+| [v2.0.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.0.1) | Mypy type annotation fix |
 | [v2.0.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.0.0) | Major improvements: staleness watchdog, exponential backoff, MQTT TLS, full config exposure, unit tests, CI/CD |
 | [v1.0.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v1.0.0) | Initial release |
 

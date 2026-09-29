@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1
+
+### Bug Fixes
+- Clean up ruff errors in test_integration.py (unused imports, import sorting, socket.timeout, unused variables)
+
 ## 2.1.0
 
 ### New Features
