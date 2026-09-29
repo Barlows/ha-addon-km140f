@@ -1,6 +1,6 @@
 name: "Junctek KM140F"
 description: "TCP→MQTT bridge for Junctek KM140F battery monitor via WiFi module"
-version: "2.0.3"
+version: "2.1.0"
 slug: "km140f"
 url: "https://github.com/Barlows/ha-addon-km140f"
 arch:
