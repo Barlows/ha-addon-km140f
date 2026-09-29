@@ -2,7 +2,7 @@
 
 https://s.click.aliexpress.com/e/_c4MP4mrn
 
-BLE Scanner (fast) - https://github.com/bootuz-dinamon/Junctek-KM-F-Series-BLE-scanner-EspHome
+BLE Scanner (fast) - https://github.com/Barlows/Junctek-KM-F-Series-BLE-scanner-EspHome
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -38,10 +38,15 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 | `mqtt_port` | `1883` | MQTT broker port |
 | `mqtt_user` | _(empty)_ | MQTT username (if auth enabled) |
 | `mqtt_pass` | _(empty)_ | MQTT password |
+| `mqtt_use_tls` | `false` | Enable TLS encryption for MQTT connection |
+| `mqtt_tls_ca_cert` | _(empty)_ | Path to custom CA certificate (optional) |
 | `device_id` | `junctek_km140f` | Unique device ID (used as MQTT topic prefix) |
 | `device_name` | `Junctek KM140F` | Friendly name shown in Home Assistant |
+| `sw_version` | `1.2.0` | Firmware version reported to Home Assistant |
 | `poll_c_interval` | `30` | How often to request `:C=` energy totals (seconds) |
 | `reconnect_delay` | `5` | Seconds between TCP reconnection attempts |
+| `socket_timeout` | `15` | TCP socket timeout (seconds) |
+| `mqtt_keepalive` | `60` | MQTT keepalive interval (seconds) |
 
 ---
 
@@ -62,6 +67,17 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 
 ---
 
+## Features
+
+- **Automatic discovery**: Sensors are created automatically in Home Assistant via MQTT Discovery
+- **Staleness watchdog**: Automatically reconnects if no data is received for 60 seconds
+- **Exponential backoff**: Reconnection delay increases gradually (up to 5 minutes max)
+- **MQTT TLS support**: Optional TLS encryption for secure MQTT connections
+- **Robust parsing**: Handles `\r\n` line endings, extra fields, and malformed data gracefully
+- **Clean shutdown**: Properly publishes offline status on SIGTERM/SIGINT
+
+---
+
 ## Protocol notes
 
 The KM140F WiFi module streams data automatically without polling.
@@ -73,3 +89,18 @@ Push format (confirmed by field-testing against display readings):
 ```
 
 Direction: `0` = discharging, `1` = charging.
+
+---
+
+## Releases
+
+| Version | Description |
+|---------|-------------|
+| [v2.0.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.0.0) | Major improvements: staleness watchdog, exponential backoff, MQTT TLS, full config exposure, unit tests, CI/CD |
+| [v1.0.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v1.0.0) | Initial release |
+
+---
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
