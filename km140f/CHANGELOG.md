@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.0.2
+
+### Reliability
+- Add MQTT publish failure handling with return code checking
+- Improve MQTT disconnect logging for better diagnostics
+
+### Developer Experience
+- Add requirements.txt for reproducible builds
+- Add .dockerignore for faster Docker builds
+- Add mypy.ini for centralized type checking config
+- Add Makefile with common dev tasks (test, lint, typecheck, format)
+- Add .pre-commit-config.yaml for pre-commit hooks
+
+### Community & Maintenance
+- Add CONTRIBUTING.md with contribution guidelines
+- Add SECURITY.md with security policy
+- Add CODE_OF_CONDUCT.md with community standards
+- Add .github/dependabot.yml for automated dependency updates
+- Add .github/stale.yml for stale issue management
+
 ## 2.0.1
 
 ### Bug Fixes
