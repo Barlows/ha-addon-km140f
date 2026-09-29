@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.3
+
+### Bug Fixes
+- Move requirements.txt into km140f/ directory for Docker build context
+
 ## 2.0.2
 
 ### Reliability
