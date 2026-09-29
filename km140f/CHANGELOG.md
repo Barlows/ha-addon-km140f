@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.3
+
+### Bug Fixes
+- Fix BrokenPipeError in health check and web UI handlers when client disconnects early
+- Update default alert thresholds for 48V battery systems (40-60V range)
+
 ## 2.2.2
 
 ### Bug Fixes

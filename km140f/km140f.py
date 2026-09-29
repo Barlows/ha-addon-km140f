@@ -75,8 +75,8 @@ DB_RETENTION_DAYS = int(os.getenv("DB_RETENTION_DAYS", "30"))
 
 # Alerting
 ENABLE_ALERTS = os.getenv("ENABLE_ALERTS", "true").lower() in ("true", "1", "yes")
-ALERT_VOLTAGE_MIN = float(os.getenv("ALERT_VOLTAGE_MIN", "10.0"))
-ALERT_VOLTAGE_MAX = float(os.getenv("ALERT_VOLTAGE_MAX", "15.0"))
+ALERT_VOLTAGE_MIN = float(os.getenv("ALERT_VOLTAGE_MIN", "40.0"))
+ALERT_VOLTAGE_MAX = float(os.getenv("ALERT_VOLTAGE_MAX", "60.0"))
 ALERT_SOC_MIN = float(os.getenv("ALERT_SOC_MIN", "20.0"))
 ALERT_COOLDOWN = int(os.getenv("ALERT_COOLDOWN", "300"))
 
@@ -475,11 +475,12 @@ class WebUIHandler(BaseHTTPRequestHandler):
     """Simple web interface for live data and configuration."""
 
     def do_GET(self) -> None:
-        if self.path == "/" or self.path == "/index.html":
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.end_headers()
-            html = f"""<!DOCTYPE html>
+        try:
+            if self.path == "/" or self.path == "/index.html":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                html = f"""<!DOCTYPE html>
 <html>
 <head>
     <title>{DEVICE_NAME}</title>
@@ -537,15 +538,17 @@ class WebUIHandler(BaseHTTPRequestHandler):
     </div>
 </body>
 </html>"""
-            self.wfile.write(html.encode())
-        elif self.path == "/api/data":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(STATE.last_published_values).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
+                self.wfile.write(html.encode())
+            elif self.path == "/api/data":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(STATE.last_published_values).encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Client disconnected before response was sent
 
     def log_message(self, format: str, *args: Any) -> None:
         pass  # Suppress default logging
@@ -812,24 +815,27 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     """Simple HTTP health check endpoint."""
 
     def do_GET(self) -> None:
-        if self.path == "/health":
-            status = 200 if STATE.tcp_connected and STATE.mqtt_connected else 503
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            response = {
-                "status": "healthy" if status == 200 else "unhealthy",
-                "tcp_connected": STATE.tcp_connected,
-                "mqtt_connected": STATE.mqtt_connected,
-                "buffer_size": len(DATA_BUFFER),
-                "uptime": time.monotonic() - STATE.metrics["uptime_seconds"]
-                if STATE.metrics["uptime_seconds"] > 0
-                else 0,
-            }
-            self.wfile.write(json.dumps(response).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
+        try:
+            if self.path == "/health":
+                status = 200 if STATE.tcp_connected and STATE.mqtt_connected else 503
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                response = {
+                    "status": "healthy" if status == 200 else "unhealthy",
+                    "tcp_connected": STATE.tcp_connected,
+                    "mqtt_connected": STATE.mqtt_connected,
+                    "buffer_size": len(DATA_BUFFER),
+                    "uptime": time.monotonic() - STATE.metrics["uptime_seconds"]
+                    if STATE.metrics["uptime_seconds"] > 0
+                    else 0,
+                }
+                self.wfile.write(json.dumps(response).encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Client disconnected before response was sent
 
     def log_message(self, format: str, *args: Any) -> None:
         pass  # Suppress default logging
