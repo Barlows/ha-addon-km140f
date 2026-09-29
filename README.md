@@ -81,6 +81,11 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 - **Structured logging**: JSON log format support via `LOG_FORMAT=json`
 - **Configuration validation**: Validates at startup with helpful errors
 - **Docker healthcheck**: `HEALTHCHECK` instruction in Dockerfile
+- **Configuration hot-reload**: Reload config via SIGHUP without restarting
+- **Data persistence**: SQLite storage for historical data (30-day retention)
+- **Alerting**: Threshold-based alerts for voltage and SOC
+- **Web UI**: Simple web interface at port 8082 for live data
+- **Docker Compose**: Easy local development with `docker-compose up`
 
 ---
 
@@ -102,6 +107,7 @@ Direction: `0` = discharging, `1` = charging.
 
 | Version | Description |
 |---------|-------------|
+| [v2.2.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.0) | Config hot-reload, SQLite persistence, alerts, web UI, Docker Compose |
 | [v2.1.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.1.1) | Ruff cleanup in tests |
 | [v2.1.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.1.0) | Data buffering, health checks, metrics, multi-device support |
 | [v2.0.3](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.0.3) | Docker build fix |

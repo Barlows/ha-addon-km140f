@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.2.0
+
+### New Features
+- **Configuration hot-reload**: Reload config via SIGHUP without restarting
+- **Data persistence**: SQLite storage for historical data (30-day retention)
+- **Alerting**: Threshold-based alerts for voltage and SOC
+- **Web UI**: Simple web interface at port 8082 for live data
+- **Codecov integration**: Coverage reporting with Codecov
+- **Snyk security scanning**: Automated vulnerability scanning
+- **Docker Compose**: Easy local development with docker-compose up
+- **Pre-commit CI**: Run pre-commit hooks in GitHub Actions
+- **Documentation**: Added demo, tutorial, and wiki docs
+
+### Configuration Options
+- `ENABLE_PERSISTENCE`: Enable SQLite data persistence (default: true)
+- `DB_PATH`: Database file path (default: /data/km140f.db)
+- `DB_RETENTION_DAYS`: Data retention period (default: 30)
+- `ENABLE_ALERTS`: Enable threshold alerts (default: true)
+- `ALERT_VOLTAGE_MIN`: Minimum voltage threshold (default: 10.0)
+- `ALERT_VOLTAGE_MAX`: Maximum voltage threshold (default: 15.0)
+- `ALERT_SOC_MIN`: Minimum SOC threshold (default: 20.0)
+- `ENABLE_WEB_UI`: Enable web interface (default: true)
+- `WEB_UI_PORT`: Web UI port (default: 8082)
+
 ## 2.1.1
 
 ### Bug Fixes

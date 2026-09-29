@@ -1,0 +1,30 @@
+version: "3.8"
+
+services:
+  km140f:
+    build:
+      context: ./km140f
+      dockerfile: Dockerfile
+    container_name: km140f-bridge
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - MONITOR_HOST=192.168.0.204
+      - MONITOR_PORT=8899
+      - MQTT_HOST=localhost
+      - MQTT_PORT=1883
+      - MQTT_USER=km140f
+      - MQTT_PASS=
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=text
+      - ENABLE_METRICS=true
+      - ENABLE_HEALTH_CHECK=true
+      - ENABLE_WEB_UI=true
+      - ENABLE_PERSISTENCE=true
+      - ENABLE_ALERTS=true
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"   # Metrics
+      - "8081:8081"   # Health check
+      - "8082:8082"   # Web UI

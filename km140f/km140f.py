@@ -12,6 +12,7 @@ import logging
 import os
 import signal
 import socket
+import sqlite3
 import sys
 import time
 from collections import deque
@@ -57,6 +58,22 @@ METRICS_PORT = int(os.getenv("METRICS_PORT", "8080"))
 ENABLE_HEALTH_CHECK = os.getenv("ENABLE_HEALTH_CHECK", "true").lower() in ("true", "1", "yes")
 HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "8081"))
 
+# Data persistence
+ENABLE_PERSISTENCE = os.getenv("ENABLE_PERSISTENCE", "true").lower() in ("true", "1", "yes")
+DB_PATH = os.getenv("DB_PATH", "/data/km140f.db")
+DB_RETENTION_DAYS = int(os.getenv("DB_RETENTION_DAYS", "30"))
+
+# Alerting
+ENABLE_ALERTS = os.getenv("ENABLE_ALERTS", "true").lower() in ("true", "1", "yes")
+ALERT_VOLTAGE_MIN = float(os.getenv("ALERT_VOLTAGE_MIN", "10.0"))
+ALERT_VOLTAGE_MAX = float(os.getenv("ALERT_VOLTAGE_MAX", "15.0"))
+ALERT_SOC_MIN = float(os.getenv("ALERT_SOC_MIN", "20.0"))
+ALERT_COOLDOWN = int(os.getenv("ALERT_COOLDOWN", "300"))
+
+# Web UI
+ENABLE_WEB_UI = os.getenv("ENABLE_WEB_UI", "true").lower() in ("true", "1", "yes")
+WEB_UI_PORT = int(os.getenv("WEB_UI_PORT", "8082"))
+
 
 class BridgeState:
     """Encapsulates mutable bridge state for better testability."""
@@ -75,6 +92,7 @@ class BridgeState:
             "buffer_size": 0,
             "uptime_seconds": 0.0,
         }
+        self.alerts: dict[str, float] = {}  # alert_name -> last_triggered_time
 
 
 # Global state instance
@@ -83,6 +101,96 @@ TCP_CONNECTED = STATE.tcp_connected  # Backwards compatibility
 
 # Data buffer for MQTT outage resilience
 DATA_BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX_SIZE)
+
+
+class DataPersistence:
+    """SQLite-based data persistence for historical analysis."""
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+        self._init_db()
+
+    def _init_db(self) -> None:
+        """Initialize the database schema."""
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sensor_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL NOT NULL,
+                    voltage REAL,
+                    current REAL,
+                    power REAL,
+                    remaining_capacity REAL,
+                    time_remaining INTEGER,
+                    set_capacity REAL,
+                    soc REAL,
+                    status TEXT,
+                    charge_kwh REAL,
+                    discharge_kwh REAL
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_timestamp ON sensor_data(timestamp)
+            """)
+            conn.commit()
+
+    def insert(self, data: dict[str, Any]) -> None:
+        """Insert sensor data into the database."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    """INSERT INTO sensor_data 
+                    (timestamp, voltage, current, power, remaining_capacity, 
+                     time_remaining, set_capacity, soc, status, charge_kwh, discharge_kwh)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        time.time(),
+                        data.get("voltage"),
+                        data.get("current"),
+                        data.get("power"),
+                        data.get("remaining_capacity"),
+                        data.get("time_remaining"),
+                        data.get("set_capacity"),
+                        data.get("soc"),
+                        data.get("status"),
+                        data.get("charge_kwh"),
+                        data.get("discharge_kwh"),
+                    ),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("Failed to persist data: %s", exc)
+
+    def cleanup_old_data(self, retention_days: int) -> None:
+        """Remove data older than retention_days."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "DELETE FROM sensor_data WHERE timestamp < ?",
+                    (time.time() - retention_days * 86400,),
+                )
+                conn.commit()
+        except sqlite3.Error as exc:
+            log.warning("Failed to cleanup old data: %s", exc)
+
+    def get_recent(self, limit: int = 100) -> list[dict[str, Any]]:
+        """Get recent sensor data."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT * FROM sensor_data ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error as exc:
+            log.warning("Failed to get recent data: %s", exc)
+            return []
+
+
+# Global persistence instance
+DB: DataPersistence | None = None
 
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text").lower()
 
@@ -309,6 +417,123 @@ def _write_to_fallback_file(data: dict[str, Any]) -> None:
     except OSError as exc:
         log.warning("Failed to write to fallback file: %s", exc)
 
+
+def check_alerts(data: dict[str, Any]) -> None:
+    """Check sensor data against alert thresholds."""
+    if not ENABLE_ALERTS:
+        return
+
+    now = time.monotonic()
+    alerts = []
+
+    voltage = data.get("voltage")
+    if voltage is not None:
+        if voltage < ALERT_VOLTAGE_MIN:
+            alerts.append(f"voltage_low: {voltage}V < {ALERT_VOLTAGE_MIN}V")
+        elif voltage > ALERT_VOLTAGE_MAX:
+            alerts.append(f"voltage_high: {voltage}V > {ALERT_VOLTAGE_MAX}V")
+
+    soc = data.get("soc")
+    if soc is not None and soc < ALERT_SOC_MIN:
+        alerts.append(f"soc_low: {soc}% < {ALERT_SOC_MIN}%")
+
+    for alert in alerts:
+        last_triggered = STATE.alerts.get(alert, 0)
+        if now - last_triggered >= ALERT_COOLDOWN:
+            STATE.alerts[alert] = now
+            log.warning("ALERT: %s", alert)
+
+
+class WebUIHandler(BaseHTTPRequestHandler):
+    """Simple web interface for live data and configuration."""
+
+    def do_GET(self) -> None:
+        if self.path == "/" or self.path == "/index.html":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{DEVICE_NAME}</title>
+    <meta http-equiv="refresh" content="5">
+    <style>
+        body {{ font-family: sans-serif; margin: 20px; background: #1a1a2e; color: #eee; }}
+        .card {{ background: #16213e; padding: 20px; border-radius: 10px; margin: 10px 0; }}
+        .metric {{ display: inline-block; margin: 10px 20px 10px 0; }}
+        .value {{ font-size: 2em; font-weight: bold; color: #00ff88; }}
+        .label {{ font-size: 0.9em; color: #888; }}
+        .status {{ padding: 5px 10px; border-radius: 5px; display: inline-block; }}
+        .online {{ background: #00ff88; color: #000; }}
+        .offline {{ background: #ff4444; color: #fff; }}
+    </style>
+</head>
+<body>
+    <h1>{DEVICE_NAME}</h1>
+    <div class="card">
+        <div class="metric">
+            <div class="value">{STATE.last_published_values.get('voltage', '—')}</div>
+            <div class="label">Voltage (V)</div>
+        </div>
+        <div class="metric">
+            <div class="value">{STATE.last_published_values.get('current', '—')}</div>
+            <div class="label">Current (A)</div>
+        </div>
+        <div class="metric">
+            <div class="value">{STATE.last_published_values.get('power', '—')}</div>
+            <div class="label">Power (W)</div>
+        </div>
+        <div class="metric">
+            <div class="value">{STATE.last_published_values.get('soc', '—')}</div>
+            <div class="label">State of Charge (%)</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="metric">
+            <div class="value">{STATE.last_published_values.get('remaining_capacity', '—')}</div>
+            <div class="label">Remaining Capacity (Ah)</div>
+        </div>
+        <div class="metric">
+            <div class="value">{STATE.last_published_values.get('time_remaining', '—')}</div>
+            <div class="label">Time Remaining (min)</div>
+        </div>
+        <div class="metric">
+            <div class="value">{STATE.last_published_values.get('status', '—')}</div>
+            <div class="label">Status</div>
+        </div>
+    </div>
+    <div class="card">
+        <p>TCP: <span class="status {'online' if STATE.tcp_connected else 'offline'}">{'Online' if STATE.tcp_connected else 'Offline'}</span></p>
+        <p>MQTT: <span class="status {'online' if STATE.mqtt_connected else 'offline'}">{'Online' if STATE.mqtt_connected else 'Offline'}</span></p>
+        <p>Buffer: {len(DATA_BUFFER)} messages</p>
+        <p>Uptime: {time.monotonic() - STATE.metrics['uptime_seconds']:.0f}s</p>
+    </div>
+</body>
+</html>"""
+            self.wfile.write(html.encode())
+        elif self.path == "/api/data":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(STATE.last_published_values).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format: str, *args: Any) -> None:
+        pass  # Suppress default logging
+
+
+def start_web_ui_server() -> None:
+    """Start the web UI HTTP server in a background thread."""
+    try:
+        server = HTTPServer(("0.0.0.0", WEB_UI_PORT), WebUIHandler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        log.info("Web UI server started on port %d", WEB_UI_PORT)
+    except OSError as exc:
+        log.warning("Failed to start web UI server: %s", exc)
+
 def parse_a(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 6:
         log.warning("Short A frame: %s", fields)
@@ -470,6 +695,9 @@ def _tcp_loop_single(mq: mqtt.Client, host: str, port: int, reconnect_delay: int
                     data = parse_line(line_str)
                     if data:
                         publish_state_map_throttled(mq, data)
+                        check_alerts(data)
+                        if DB:
+                            DB.insert(data)
 
         except (OSError, ConnectionError, ValueError) as exc:
             STATE.tcp_connected = False
@@ -496,8 +724,37 @@ def setup_signal_handlers(mq: mqtt.Client) -> None:
         log.info("Bridge exited cleanly.")
         sys.exit(0)
 
+    def handle_reload(signum: int, frame: Any) -> None:
+        log.info("Received SIGHUP — reloading configuration...")
+        reload_config()
+
     signal.signal(signal.SIGTERM, handle_exit)
     signal.signal(signal.SIGINT, handle_exit)
+    signal.signal(signal.SIGHUP, handle_reload)
+
+
+def reload_config() -> None:
+    """Reload configuration from environment variables."""
+    global MONITOR_HOSTS, MONITOR_PORT, MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS
+    global DEVICE_ID, DEVICE_NAME, POLL_C_INTERVAL, RECONNECT_DELAY
+    global SOCKET_TIMEOUT, STALE_TIMEOUT, BUFFER_MAX_SIZE
+
+    MONITOR_HOSTS_STR = os.getenv("MONITOR_HOSTS", os.getenv("MONITOR_HOST", "192.168.0.204"))
+    MONITOR_HOSTS = [h.strip() for h in MONITOR_HOSTS_STR.split(",") if h.strip()]
+    MONITOR_PORT = int(os.getenv("MONITOR_PORT", "8899"))
+    MQTT_HOST = os.getenv("MQTT_HOST", "core-mosquitto")
+    MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+    MQTT_USER = os.getenv("MQTT_USER", "km140f")
+    MQTT_PASS = os.getenv("MQTT_PASS", "")
+    DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
+    DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
+    POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
+    RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
+    SOCKET_TIMEOUT = int(os.getenv("SOCKET_TIMEOUT", "15"))
+    STALE_TIMEOUT = int(os.getenv("STALE_TIMEOUT", "60"))
+    BUFFER_MAX_SIZE = int(os.getenv("BUFFER_MAX_SIZE", "1000"))
+
+    log.info("Configuration reloaded: %d monitor(s), MQTT %s:%d", len(MONITOR_HOSTS), MQTT_HOST, MQTT_PORT)
 
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -628,26 +885,37 @@ def build_mqtt_client() -> mqtt.Client:
     return client
 
 def main() -> None:
+    global DB
+
     log.info("Starting Junctek KM140F TCP to MQTT bridge")
-    
+
     # Validate configuration
     config_errors = validate_config()
     if config_errors:
         for error in config_errors:
             log.error("Configuration error: %s", error)
         sys.exit(1)
-    
+
     # Record start time for metrics
     STATE.metrics["uptime_seconds"] = time.monotonic()
-    
+
+    # Initialize data persistence
+    if ENABLE_PERSISTENCE:
+        DB = DataPersistence(DB_PATH)
+        log.info("Data persistence enabled: %s", DB_PATH)
+
     # Start health check server
     if ENABLE_HEALTH_CHECK:
         start_health_check_server()
-    
+
     # Start metrics server
     if ENABLE_METRICS:
         start_metrics_server()
-    
+
+    # Start web UI server
+    if ENABLE_WEB_UI:
+        start_web_ui_server()
+
     mq = build_mqtt_client()
 
     while True:
