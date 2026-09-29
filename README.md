@@ -16,7 +16,7 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store**
 2. Click **⋮ (three dots) → Repositories**
-3. Add `https://github.com/bootuz-dinamon/ha-addon-km140f`
+3. Add `https://github.com/Barlows/ha-addon-km140f`
 4. Find **Junctek KM140F** in the store and click **Install**
 
 ---
@@ -32,7 +32,7 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `monitor_host` | `192.168.1.100` | IP address of the KM140F WiFi module |
+| `monitor_host` | `192.168.0.204` | IP address of the KM140F WiFi module |
 | `monitor_port` | `8899` | TCP port (fixed by Junctek) |
 | `mqtt_host` | `core-mosquitto` | MQTT broker hostname |
 | `mqtt_port` | `1883` | MQTT broker port |
