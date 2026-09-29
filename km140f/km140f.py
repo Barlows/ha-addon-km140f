@@ -73,7 +73,7 @@ DEVICE_INFO = {
     "sw_version": SW_VERSION,
 }
 
-SENSORS = [
+SENSORS: list[dict[str, Any]] = [
     {
         "uid": "voltage",
         "name": "Voltage",
@@ -157,7 +157,7 @@ SENSORS = [
     },
 ]
 
-TEXT_SENSORS = [
+TEXT_SENSORS: list[dict[str, Any]] = [
     {
         "uid": "status",
         "name": "Status",
