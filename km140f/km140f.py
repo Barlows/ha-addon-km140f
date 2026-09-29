@@ -43,10 +43,19 @@ STALE_TIMEOUT = int(os.getenv("STALE_TIMEOUT", "60"))
 # Throttle configuration (Debouncing)
 THROTTLE_HEARTBEAT_INTERVAL = 10.0
 
-# Global state trackers
-TCP_CONNECTED = False
-LAST_PUBLISHED_VALUES: dict[str, Any] = {}
-LAST_HEARTBEAT_TIME = 0.0
+
+class BridgeState:
+    """Encapsulates mutable bridge state for better testability."""
+
+    def __init__(self) -> None:
+        self.tcp_connected: bool = False
+        self.last_published_values: dict[str, Any] = {}
+        self.last_heartbeat_time: float = 0.0
+
+
+# Global state instance
+STATE = BridgeState()
+TCP_CONNECTED = STATE.tcp_connected  # Backwards compatibility
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
@@ -203,21 +212,20 @@ def publish_availability(mq: mqtt.Client, online: bool) -> None:
     mq.publish(state_topic("availability"), "online" if online else "offline", retain=True)
 
 def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
-    global LAST_HEARTBEAT_TIME
     now = time.monotonic()
     should_publish = False
 
-    if now - LAST_HEARTBEAT_TIME >= THROTTLE_HEARTBEAT_INTERVAL:
+    if now - STATE.last_heartbeat_time >= THROTTLE_HEARTBEAT_INTERVAL:
         should_publish = True
-        LAST_HEARTBEAT_TIME = now
+        STATE.last_heartbeat_time = now
 
     for key, value in data.items():
-        if LAST_PUBLISHED_VALUES.get(key) != value:
-            LAST_PUBLISHED_VALUES[key] = value
+        if STATE.last_published_values.get(key) != value:
+            STATE.last_published_values[key] = value
             should_publish = True
 
     if should_publish:
-        mq.publish(state_topic("state"), json.dumps(LAST_PUBLISHED_VALUES), retain=True)
+        mq.publish(state_topic("state"), json.dumps(STATE.last_published_values), retain=True)
 
 def parse_a(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 6:
@@ -291,7 +299,6 @@ def parse_line(line: str) -> dict[str, Any] | None:
     return None
 
 def tcp_loop(mq: mqtt.Client) -> None:
-    global TCP_CONNECTED
     last_c_request = 0.0
     last_data_time = 0.0
     reconnect_delay = RECONNECT_DELAY
@@ -305,7 +312,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
             sock = socket.create_connection((MONITOR_HOST, MONITOR_PORT), timeout=10)
             sock.settimeout(SOCKET_TIMEOUT)
             
-            TCP_CONNECTED = True
+            STATE.tcp_connected = True
             last_data_time = time.monotonic()
             reconnect_delay = RECONNECT_DELAY
             publish_availability(mq, True)
@@ -353,7 +360,7 @@ def tcp_loop(mq: mqtt.Client) -> None:
                         publish_state_map_throttled(mq, data)
 
         except (OSError, ConnectionError, ValueError) as exc:
-            TCP_CONNECTED = False
+            STATE.tcp_connected = False
             log.error("TCP error: %s; reconnecting in %ds", exc, reconnect_delay)
             publish_availability(mq, False)
             time.sleep(reconnect_delay)
@@ -385,7 +392,7 @@ def on_connect(client: mqtt.Client, userdata: Any, flags: Any, rc: int, properti
     if rc == 0:
         log.info("MQTT connected")
         publish_discovery(client)
-        if TCP_CONNECTED:
+        if STATE.tcp_connected:
             publish_availability(client, True)
     else:
         log.error("MQTT connect failed: rc=%s", rc)
