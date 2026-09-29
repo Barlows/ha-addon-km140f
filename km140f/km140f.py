@@ -227,7 +227,9 @@ def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
             should_publish = True
 
     if should_publish:
-        mq.publish(state_topic("state"), json.dumps(STATE.last_published_values), retain=True)
+        result = mq.publish(state_topic("state"), json.dumps(STATE.last_published_values), retain=True)
+        if result.rc != mqtt.MQTT_ERR_SUCCESS:
+            log.warning("Failed to publish state: rc=%s", result.rc)
 
 def parse_a(fields: list[str]) -> dict[str, Any] | None:
     if len(fields) < 6:
@@ -402,7 +404,9 @@ def on_connect(client: mqtt.Client, userdata: Any, flags: Any, rc: int, properti
 # Added properties parameter to support Paho MQTT VERSION2 compliance
 def on_disconnect(client: mqtt.Client, userdata: Any, rc: int, properties: Any = None) -> None:
     if rc != 0:
-        log.warning("MQTT disconnected unexpectedly: rc=%s", rc)
+        log.warning("MQTT disconnected unexpectedly: rc=%s — will auto-reconnect", rc)
+    else:
+        log.info("MQTT disconnected cleanly")
 
 def build_mqtt_client() -> mqtt.Client:
     # Swapped cleanly over to CallbackAPIVersion.VERSION2
