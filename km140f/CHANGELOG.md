@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.2.1
+
+### Bug Fixes
+- Fix pre-commit CI: add missing `pip install pre-commit` step
+- Fix Snyk CI: add `--file` flag and conditional SARIF upload
+
 ## 2.2.0
 
 ### New Features
