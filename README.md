@@ -67,7 +67,8 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 
 ## Features
 
-- **Automatic discovery**: Sensors are created automatically in Home Assistant via MQTT Discovery
+- **Automatic discovery**: Sensors are created automatically via a single MQTT device-discovery message
+- **Recovers after HA restart**: Re-publishes discovery on the Home Assistant birth message
 - **Staleness watchdog**: Automatically reconnects if no data is received for 60 seconds
 - **Exponential backoff**: Reconnection delay increases gradually (up to 5 minutes max)
 - **MQTT TLS support**: Optional TLS encryption for secure MQTT connections
@@ -107,6 +108,10 @@ Direction: `0` = discharging, `1` = charging.
 
 | Version | Description |
 |---------|-------------|
+| [v2.3.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.3.0) | HA restart recovery, DB cleanup, device discovery, doubled-name fix |
+| [v2.2.3](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.3) | BrokenPipeError fix, 48V alert thresholds |
+| [v2.2.2](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.2) | Type annotations for mypy compliance |
+| [v2.2.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.1) | Fix pre-commit and Snyk CI workflows |
 | [v2.2.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.0) | Config hot-reload, SQLite persistence, alerts, web UI, Docker Compose |
 | [v2.1.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.1.1) | Ruff cleanup in tests |
 | [v2.1.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.1.0) | Data buffering, health checks, metrics, multi-device support |

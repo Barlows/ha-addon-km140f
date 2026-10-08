@@ -1,5 +1,26 @@
 # Changelog
 
+## 2.3.0
+
+### Bug Fixes
+- **Entities no longer stay unavailable after a Home Assistant restart** — the bridge now subscribes to `homeassistant/status` and re-publishes discovery on the HA birth message. Previously discovery was only sent on MQTT connect, so an HA restart left entities permanently unavailable
+- **SQLite database no longer grows unbounded** — `cleanup_old_data()` was implemented but never called; old rows are now purged on a timer (default every 6 hours, 30-day retention)
+- **Removed dead `TCP_CONNECTED` global** — it was a bool copy, not a reference, so it was permanently `False`
+- **Fixed doubled entity names** — entity names no longer include the device name, which Home Assistant already prefixes automatically (previously rendered as "Junctek KM140F Junctek KM140F Voltage")
+- **Synced `sw_version` with add-on version** — was stuck at `1.2.0` while the add-on was at `2.2.3`
+
+### Improvements
+- **MQTT device discovery** — single discovery message covering all 10 components instead of 10 separate messages, reducing broker IO. Recommended by HA for multi-component devices
+- **Added `origin` block** — required for device discovery; lets HA show which add-on created each entity
+- **Rate-limited database writes** — downsampled to once per minute (`DB_WRITE_INTERVAL`) instead of writing every incoming frame
+- **Cumulative fields merged before persisting** — `:C=` energy totals are no longer lost on `:A=` frames
+- **Wired up `get_recent()`** — exposed as `/api/history?limit=N` on the web UI, previously dead code
+- **Availability via array form** — standard HA pattern for availability topics
+
+### New Options
+- `DB_WRITE_INTERVAL` — seconds between database writes (default: 60)
+- `DB_CLEANUP_INTERVAL` — seconds between database purges (default: 21600 / 6 hours)
+
 ## 2.2.3
 
 ### Bug Fixes

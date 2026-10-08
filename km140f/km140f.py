@@ -41,7 +41,7 @@ MQTT_TLS_CA_CERT = os.getenv("MQTT_TLS_CA_CERT", "")
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
-SW_VERSION = os.getenv("SW_VERSION", "1.2.0")
+SW_VERSION = os.getenv("SW_VERSION", "2.3.0")
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
@@ -103,11 +103,12 @@ class BridgeState:
             "uptime_seconds": 0.0,
         }
         self.alerts: dict[str, float] = {}  # alert_name -> last_triggered_time
+        self.last_persist_time: float = 0.0
+        self.last_cleanup_time: float = 0.0
 
 
 # Global state instance
 STATE = BridgeState()
-TCP_CONNECTED = STATE.tcp_connected  # Backwards compatibility
 
 # Data buffer for MQTT outage resilience
 DATA_BUFFER: deque[dict[str, Any]] = deque(maxlen=BUFFER_MAX_SIZE)
@@ -202,6 +203,35 @@ class DataPersistence:
 # Global persistence instance
 DB: DataPersistence | None = None
 
+# How often to write a row to SQLite, and how often to purge old rows.
+DB_WRITE_INTERVAL = int(os.getenv("DB_WRITE_INTERVAL", "60"))
+DB_CLEANUP_INTERVAL = int(os.getenv("DB_CLEANUP_INTERVAL", "21600"))
+
+
+def _persist_and_maybe_cleanup(data: dict[str, Any]) -> None:
+    """Persist a sample on a fixed interval and purge old rows periodically.
+
+    Writing every incoming frame would produce tens of thousands of rows per
+    day for no benefit, so samples are downsampled to DB_WRITE_INTERVAL.
+    """
+    if DB is None:
+        return
+
+    now = time.monotonic()
+
+    if now - STATE.last_persist_time >= DB_WRITE_INTERVAL:
+        STATE.last_persist_time = now
+        # Merge with the last known values so cumulative :C= fields persist
+        # even on frames that don't carry them.
+        merged = {**STATE.last_published_values, **data}
+        DB.insert(merged)
+
+    if now - STATE.last_cleanup_time >= DB_CLEANUP_INTERVAL:
+        STATE.last_cleanup_time = now
+        DB.cleanup_old_data(DB_RETENTION_DAYS)
+        log.debug("Purged sensor data older than %d days", DB_RETENTION_DAYS)
+
+
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text").lower()
 
 if LOG_FORMAT == "json":
@@ -238,6 +268,14 @@ DEVICE_INFO = {
     "manufacturer": "Junctek",
     "model": "KM140F",
     "sw_version": SW_VERSION,
+}
+
+# Origin block — required for device discovery, recommended for single-component.
+# Tells Home Assistant which add-on produced these entities.
+ORIGIN_INFO = {
+    "name": "Junctek KM140F Add-on",
+    "sw_version": SW_VERSION,
+    "support_url": "https://github.com/Barlows/ha-addon-km140f/issues",
 }
 
 SENSORS: list[dict[str, Any]] = [
@@ -334,55 +372,65 @@ TEXT_SENSORS: list[dict[str, Any]] = [
 ]
 
 
-def discovery_topic(component: str, unique_id: str) -> str:
-    return f"homeassistant/{component}/{DEVICE_ID}/{unique_id}/config"
-
-
 def state_topic(key: str) -> str:
     return f"{DEVICE_ID}/{key}"
 
 
+def build_component(sensor: dict[str, Any], platform: str = "sensor") -> dict[str, Any]:
+    """Build a single component config for device discovery."""
+    component: dict[str, Any] = {
+        "p": platform,
+        "name": sensor["name"],
+        "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
+        "state_topic": state_topic("state"),
+        "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}",
+    }
+
+    if sensor.get("device_class"):
+        component["device_class"] = sensor["device_class"]
+    if sensor.get("unit"):
+        component["unit_of_measurement"] = sensor["unit"]
+    if sensor.get("state_class"):
+        component["state_class"] = sensor["state_class"]
+    if sensor.get("icon"):
+        component["icon"] = sensor["icon"]
+    if sensor.get("precision") is not None:
+        component["suggested_display_precision"] = sensor["precision"]
+
+    return component
+
+
 def publish_discovery(mq: mqtt.Client) -> None:
+    """Publish a single device discovery payload covering all entities.
+
+    Uses MQTT device discovery (one message) rather than per-entity discovery,
+    as recommended for devices with multiple components.
+    """
+    components: dict[str, Any] = {}
     for sensor in SENSORS:
-        payload = {
-            "name": f"{DEVICE_NAME} {sensor['name']}",
-            "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
-            "state_topic": state_topic("state"),
-            "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}",
-            "unit_of_measurement": sensor.get("unit"),
-            "state_class": sensor.get("state_class"),
-            "device": DEVICE_INFO,
-            "availability_topic": state_topic("availability"),
-            "payload_available": "online",
-            "payload_not_available": "offline",
-            "suggested_display_precision": sensor["precision"],
-        }
-        if sensor.get("device_class"):
-            payload["device_class"] = sensor["device_class"]
-        if sensor.get("icon"):
-            payload["icon"] = sensor["icon"]
-
-        mq.publish(
-            discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True
-        )
-
+        components[sensor["uid"]] = build_component(sensor)
     for sensor in TEXT_SENSORS:
-        payload = {
-            "name": f"{DEVICE_NAME} {sensor['name']}",
-            "unique_id": f"{DEVICE_ID}_{sensor['uid']}",
-            "state_topic": state_topic("state"),
-            "value_template": f"{{{{ value_json.{sensor['key']} | default(None) }}}}",
-            "icon": sensor["icon"],
-            "device": DEVICE_INFO,
-            "availability_topic": state_topic("availability"),
-            "payload_available": "online",
-            "payload_not_available": "offline",
-        }
-        mq.publish(
-            discovery_topic("sensor", sensor["uid"]), json.dumps(payload), retain=True
-        )
+        components[sensor["uid"]] = build_component(sensor)
 
-    log.info("Published consolidated MQTT discovery configurations")
+    payload = {
+        "dev": DEVICE_INFO,
+        "o": ORIGIN_INFO,
+        "cmps": components,
+        "state_topic": state_topic("state"),
+        "qos": 1,
+        "availability": [
+            {
+                "topic": state_topic("availability"),
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            }
+        ],
+    }
+
+    mq.publish(
+        f"homeassistant/device/{DEVICE_ID}/config", json.dumps(payload), retain=True
+    )
+    log.info("Published device discovery payload with %d components", len(components))
 
 
 def publish_availability(mq: mqtt.Client, online: bool) -> None:
@@ -544,6 +592,21 @@ class WebUIHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(STATE.last_published_values).encode())
+            elif self.path.startswith("/api/history"):
+                limit = 100
+                if "?" in self.path:
+                    query = self.path.split("?", 1)[1]
+                    for part in query.split("&"):
+                        if part.startswith("limit="):
+                            try:
+                                limit = max(1, min(1000, int(part[6:])))
+                            except ValueError:
+                                pass
+                rows = DB.get_recent(limit) if DB else []
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(rows).encode())
             else:
                 self.send_response(404)
                 self.end_headers()
@@ -740,8 +803,7 @@ def _tcp_loop_single(
                     if data:
                         publish_state_map_throttled(mq, data)
                         check_alerts(data)
-                        if DB:
-                            DB.insert(data)
+                        _persist_and_maybe_cleanup(data)
 
         except (OSError, ConnectionError, ValueError) as exc:
             STATE.tcp_connected = False
@@ -905,6 +967,23 @@ km140f_uptime_seconds {time.monotonic() - STATE.metrics["uptime_seconds"] if STA
         pass  # Suppress default logging
 
 
+# HA birth message topic — HA publishes "online" here when it starts up.
+# Entities are unavailable until a discovery message is received, so we must
+# re-publish discovery on this event or entities stay unavailable after an
+# HA restart.
+HA_STATUS_TOPIC = "homeassistant/status"
+
+
+def on_message(client: mqtt.Client, userdata: Any, msg: mqtt.MQTTMessage) -> None:
+    """Handle HA birth messages so entities are restored after an HA restart."""
+    payload = msg.payload.decode("utf-8", errors="replace").strip()
+    if payload == "online":
+        log.info("HA birth message received — republishing discovery")
+        publish_discovery(client)
+        if STATE.tcp_connected:
+            publish_availability(client, True)
+
+
 # Added properties parameter to support Paho MQTT VERSION2 compliance
 def on_connect(
     client: mqtt.Client, userdata: Any, flags: Any, rc: int, properties: Any = None
@@ -914,6 +993,9 @@ def on_connect(
         STATE.mqtt_connected = True
         STATE.metrics["mqtt_reconnects"] += 1
         publish_discovery(client)
+        # Subscribe to HA birth messages so entities recover after HA restart
+        client.subscribe(HA_STATUS_TOPIC, qos=1)
+        log.debug("Subscribed to %s for birth messages", HA_STATUS_TOPIC)
         if STATE.tcp_connected:
             publish_availability(client, True)
         _flush_buffer(client)
@@ -947,6 +1029,7 @@ def build_mqtt_client() -> mqtt.Client:
 
     client.on_connect = on_connect
     client.on_disconnect = on_disconnect
+    client.on_message = on_message
     client.will_set(state_topic("availability"), "offline", retain=True)
     return client
 
