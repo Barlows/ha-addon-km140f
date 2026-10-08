@@ -1,6 +1,12 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base-python:3.12-alpine3.19
 FROM $BUILD_FROM
 
+# Bake the add-on version into the image so the value reported to Home
+# Assistant always matches the installed add-on. BUILD_VERSION is supplied by
+# Supervisor from config.yaml; the fallback keeps local builds working.
+ARG BUILD_VERSION=2.3.1
+ENV SW_VERSION="${BUILD_VERSION}"
+
 # Install dependencies first for better layer caching
 COPY requirements.txt /requirements.txt
 RUN pip3 install --no-cache-dir -r /requirements.txt

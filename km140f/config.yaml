@@ -1,6 +1,6 @@
 name: "Junctek KM140F"
 description: "TCP→MQTT bridge for Junctek KM140F battery monitor via WiFi module"
-version: "2.3.0"
+version: "2.3.1"
 slug: "km140f"
 url: "https://github.com/Barlows/ha-addon-km140f"
 arch:
@@ -24,7 +24,6 @@ options:
   mqtt_tls_ca_cert: ""
   device_id: "junctek_km140f"
   device_name: "Junctek KM140F"
-  sw_version: "2.3.0"
   poll_c_interval: 30
   reconnect_delay: 5
   socket_timeout: 15
@@ -41,7 +40,6 @@ schema:
   mqtt_tls_ca_cert: str
   device_id: str
   device_name: str
-  sw_version: str
   poll_c_interval: int
   reconnect_delay: int
   socket_timeout: int

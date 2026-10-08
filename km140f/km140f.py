@@ -41,7 +41,16 @@ MQTT_TLS_CA_CERT = os.getenv("MQTT_TLS_CA_CERT", "")
 
 DEVICE_ID = os.getenv("DEVICE_ID", "junctek_km140f")
 DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
-SW_VERSION = os.getenv("SW_VERSION", "2.3.0")
+
+# Software version reported to Home Assistant.
+#
+# This is deliberately NOT a user-configurable option. Home Assistant persists
+# a user's saved options to /data/options.json, and changing a default in
+# config.yaml does not update existing installs. Exposing the version as an
+# option therefore left users stuck on a stale value after upgrades.
+# Instead we bake it in at image build time from config.yaml so it always
+# matches the installed add-on version.
+SW_VERSION = os.getenv("BUILD_VERSION") or os.getenv("SW_VERSION") or "2.3.1"
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))

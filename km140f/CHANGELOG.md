@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.3.1
+
+### Bug Fixes
+- **Firmware version now reports the actual add-on version** — `sw_version` was a user-configurable option, but Home Assistant persists saved options to `/data/options.json` and does not update them when defaults change in `config.yaml`. Existing installs therefore kept exporting the original `1.2.0` and stayed stuck on it after every upgrade. The version is now baked into the image at build time from `config.yaml` and the option has been removed, so it can never drift.
+
+### Notes
+- The `sw_version` option has been removed from the schema. Home Assistant may show a warning about an unknown option until it is cleared from the saved configuration. See the release notes for the one-line fix.
+
 ## 2.3.0
 
 ### Bug Fixes

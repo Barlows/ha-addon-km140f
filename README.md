@@ -40,7 +40,7 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 | `mqtt_tls_ca_cert` | _(empty)_ | Path to custom CA certificate (optional) |
 | `device_id` | `junctek_km140f` | Unique device ID (used as MQTT topic prefix) |
 | `device_name` | `Junctek KM140F` | Friendly name shown in Home Assistant |
-| `sw_version` | `1.2.0` | Firmware version reported to Home Assistant |
+| ~~`sw_version`~~ | — | *Removed in v2.3.1 — now derived from the add-on version automatically* |
 | `poll_c_interval` | `30` | How often to request `:C=` energy totals (seconds) |
 | `reconnect_delay` | `5` | Seconds between TCP reconnection attempts |
 | `socket_timeout` | `15` | TCP socket timeout (seconds) |
@@ -108,6 +108,7 @@ Direction: `0` = discharging, `1` = charging.
 
 | Version | Description |
 |---------|-------------|
+| [v2.3.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.3.1) | Firmware version now tracks the actual add-on version |
 | [v2.3.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.3.0) | HA restart recovery, DB cleanup, device discovery, doubled-name fix |
 | [v2.2.3](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.3) | BrokenPipeError fix, 48V alert thresholds |
 | [v2.2.2](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.2) | Type annotations for mypy compliance |
