@@ -56,7 +56,9 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 | Current | A | positive = charging, negative = discharging |
 | Power | W | positive = charging, negative = discharging |
 | Remaining Capacity | Ah | |
-| Time Remaining | min | to full discharge or charge |
+| Time Remaining | min | to full discharge or charge (duration sensor) |
+| Nominal Voltage | V | auto-detected pack size |
+| Alert State | — | `ok` or `alert` |
 | Set Capacity | Ah | configured in the monitor |
 | State of Charge | % | calculated from Remaining / Set Capacity |
 | Total Energy Charged | kWh | cumulative, from `:C=` |
@@ -82,6 +84,8 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 - **Structured logging**: JSON log format support via `LOG_FORMAT=json`
 - **Configuration validation**: Validates at startup with helpful errors
 - **Docker healthcheck**: `HEALTHCHECK` instruction in Dockerfile
+- **Automatic voltage class detection**: Alert thresholds adapt to 12 V / 24 V / 36 V / 48 V packs
+- **Actionable alerts**: Alerts published to MQTT so automations can react
 - **Configuration hot-reload**: Reload config via SIGHUP without restarting
 - **Data persistence**: SQLite storage for historical data (30-day retention)
 - **Alerting**: Threshold-based alerts for voltage and SOC
@@ -108,6 +112,7 @@ Direction: `0` = discharging, `1` = charging.
 
 | Version | Description |
 |---------|-------------|
+| [v2.4.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.4.0) | Auto voltage class detection, actionable alerts, duration sensor |
 | [v2.3.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.3.1) | Firmware version now tracks the actual add-on version |
 | [v2.3.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.3.0) | HA restart recovery, DB cleanup, device discovery, doubled-name fix |
 | [v2.2.3](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.2.3) | BrokenPipeError fix, 48V alert thresholds |

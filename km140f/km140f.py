@@ -50,7 +50,7 @@ DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
 # option therefore left users stuck on a stale value after upgrades.
 # Instead we bake it in at image build time from config.yaml so it always
 # matches the installed add-on version.
-SW_VERSION = os.getenv("BUILD_VERSION") or os.getenv("SW_VERSION") or "2.3.1"
+SW_VERSION = os.getenv("BUILD_VERSION") or os.getenv("SW_VERSION") or "2.4.0"
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
@@ -84,10 +84,47 @@ DB_RETENTION_DAYS = int(os.getenv("DB_RETENTION_DAYS", "30"))
 
 # Alerting
 ENABLE_ALERTS = os.getenv("ENABLE_ALERTS", "true").lower() in ("true", "1", "yes")
-ALERT_VOLTAGE_MIN = float(os.getenv("ALERT_VOLTAGE_MIN", "40.0"))
-ALERT_VOLTAGE_MAX = float(os.getenv("ALERT_VOLTAGE_MAX", "60.0"))
+# Voltage thresholds. Empty by default so they can be derived from the
+# observed battery voltage class (see detect_voltage_class). Setting these
+# explicitly disables auto-detection.
+ALERT_VOLTAGE_MIN_RAW = os.getenv("ALERT_VOLTAGE_MIN", "").strip()
+ALERT_VOLTAGE_MAX_RAW = os.getenv("ALERT_VOLTAGE_MAX", "").strip()
 ALERT_SOC_MIN = float(os.getenv("ALERT_SOC_MIN", "20.0"))
 ALERT_COOLDOWN = int(os.getenv("ALERT_COOLDOWN", "300"))
+
+# Nominal voltage bands for common lead-acid/lithium pack sizes. Thresholds are
+# derived from these so a 12 V install does not get 48 V limits, and vice versa.
+# (nominal, low, high, charge ceiling)
+VOLTAGE_BANDS: list[tuple[float, float, float, float]] = [
+    (12.0, 11.0, 14.4, 14.6),
+    (24.0, 22.0, 28.8, 29.2),
+    (36.0, 33.0, 43.2, 43.8),
+    (48.0, 44.0, 57.6, 58.4),
+]
+
+
+def detect_voltage_class(voltage: float) -> tuple[float, float, float]:
+    """Return (nominal, min, max) for the pack matching an observed voltage.
+
+    Picks the band whose nominal is closest in log space, so a 52 V reading on
+    a 48 V pack resolves to 48 V rather than drifting toward 24 V.
+    """
+    best = VOLTAGE_BANDS[-1]
+    best_err = float("inf")
+    for band in VOLTAGE_BANDS:
+        err = abs(voltage - band[0]) / band[0]
+        if err < best_err:
+            best_err = err
+            best = band
+    return best[0], best[1], best[2]
+
+
+def resolve_voltage_thresholds() -> tuple[float | None, float | None]:
+    """Return explicit thresholds if configured, else None to signal auto."""
+    if ALERT_VOLTAGE_MIN_RAW and ALERT_VOLTAGE_MAX_RAW:
+        return float(ALERT_VOLTAGE_MIN_RAW), float(ALERT_VOLTAGE_MAX_RAW)
+    return None, None
+
 
 # Web UI
 ENABLE_WEB_UI = os.getenv("ENABLE_WEB_UI", "true").lower() in ("true", "1", "yes")
@@ -114,6 +151,11 @@ class BridgeState:
         self.alerts: dict[str, float] = {}  # alert_name -> last_triggered_time
         self.last_persist_time: float = 0.0
         self.last_cleanup_time: float = 0.0
+        self.nominal_voltage: float = 0.0
+        self.volts_min: float = 0.0
+        self.volts_max: float = 0.0
+        self.volts_auto: bool = True
+        self.active_alerts: list[str] = []
 
 
 # Global state instance
@@ -329,7 +371,24 @@ SENSORS: list[dict[str, Any]] = [
         "name": "Time Remaining",
         "key": "time_remaining",
         "unit": "min",
-        "icon": "mdi:timer-sand",
+        "device_class": "duration",
+        "state_class": "measurement",
+        "precision": 0,
+    },
+    {
+        "uid": "alert_state",
+        "name": "Alert State",
+        "key": "alert_state",
+        "icon": "mdi:alert-circle-outline",
+        "device_class": "enum",
+        "options": ["ok", "alert"],
+    },
+    {
+        "uid": "nominal_voltage",
+        "name": "Nominal Voltage",
+        "key": "nominal_voltage",
+        "unit": "V",
+        "icon": "mdi:sine-wave",
         "state_class": "measurement",
         "precision": 0,
     },
@@ -439,6 +498,37 @@ def publish_discovery(mq: mqtt.Client) -> None:
     mq.publish(
         f"homeassistant/device/{DEVICE_ID}/config", json.dumps(payload), retain=True
     )
+
+    # Alert sensors live on their own topics rather than the unified state
+    # payload, so they update independently of the throttled sensor stream.
+    alert_payload = {
+        "dev": DEVICE_INFO,
+        "o": ORIGIN_INFO,
+        "cmps": {
+            "alert_state": {
+                "p": "sensor",
+                "name": "Alert State",
+                "unique_id": f"{DEVICE_ID}_alert_state",
+                "state_topic": state_topic("alert_state"),
+                "icon": "mdi:alert-circle-outline",
+                "device_class": "enum",
+                "options": ["ok", "alert"],
+            }
+        },
+        "qos": 1,
+        "availability": [
+            {
+                "topic": state_topic("availability"),
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            }
+        ],
+    }
+    mq.publish(
+        f"homeassistant/device/{DEVICE_ID}_alerts/config",
+        json.dumps(alert_payload),
+        retain=True,
+    )
     log.info("Published device discovery payload with %d components", len(components))
 
 
@@ -448,7 +538,32 @@ def publish_availability(mq: mqtt.Client, online: bool) -> None:
     )
 
 
+def publish_alerts(mq: mqtt.Client, alerts: list[str]) -> None:
+    """Publish alert summary so Home Assistant automations can react.
+
+    Emits a JSON payload on <device>/alerts and a plain 'ok'/'alerts' state on
+    <device>/alert_state, letting users build automations without parsing logs.
+    """
+    payload = {
+        "active": len(alerts) > 0,
+        "count": len(alerts),
+        "alerts": alerts,
+        "nominal_voltage": STATE.nominal_voltage,
+    }
+    mq.publish(state_topic("alerts"), json.dumps(payload), retain=True)
+    mq.publish(
+        state_topic("alert_state"),
+        "ok" if not alerts else "alert",
+        retain=True,
+    )
+
+
 def publish_state_map_throttled(mq: mqtt.Client, data: dict[str, Any]) -> None:
+    # Reflect the detected pack size so the Nominal Voltage sensor updates
+    # even on frames that carry no voltage field.
+    if STATE.nominal_voltage and "nominal_voltage" not in data:
+        data = {**data, "nominal_voltage": STATE.nominal_voltage}
+
     now = time.monotonic()
     should_publish = False
 
@@ -502,30 +617,66 @@ def _write_to_fallback_file(data: dict[str, Any]) -> None:
         log.warning("Failed to write to fallback file: %s", exc)
 
 
-def check_alerts(data: dict[str, Any]) -> None:
-    """Check sensor data against alert thresholds."""
+def update_voltage_class(voltage: float) -> None:
+    """Derive alert thresholds from the observed pack voltage, once."""
+    if not STATE.volts_auto:
+        return
+
+    nominal, low, high = detect_voltage_class(voltage)
+
+    # Only latch once we've seen a plausible reading; avoid latching on a
+    # transient startup spike by requiring two consistent observations.
+    if STATE.nominal_voltage == 0.0:
+        STATE.nominal_voltage = nominal
+        return
+
+    if abs(voltage - STATE.nominal_voltage) / STATE.nominal_voltage > 0.5:
+        # Reading is far outside the band we latched — re-evaluate.
+        STATE.nominal_voltage = nominal
+
+    STATE.volts_min = low
+    STATE.volts_max = high
+
+
+def check_alerts(mq: mqtt.Client, data: dict[str, Any]) -> None:
+    """Check sensor data against alert thresholds.
+
+    Voltage bounds are derived from the detected pack size unless the user
+    configured them explicitly, so a 12 V install is not judged by 48 V limits.
+    """
     if not ENABLE_ALERTS:
         return
 
     now = time.monotonic()
-    alerts = []
+    alerts: list[str] = []
 
     voltage = data.get("voltage")
     if voltage is not None:
-        if voltage < ALERT_VOLTAGE_MIN:
-            alerts.append(f"voltage_low: {voltage}V < {ALERT_VOLTAGE_MIN}V")
-        elif voltage > ALERT_VOLTAGE_MAX:
-            alerts.append(f"voltage_high: {voltage}V > {ALERT_VOLTAGE_MAX}V")
+        update_voltage_class(voltage)
+
+        vmin, vmax = resolve_voltage_thresholds()
+        if vmin is None:
+            vmin, vmax = STATE.volts_min, STATE.volts_max
+
+        if vmin and vmax:
+            if voltage < vmin:
+                alerts.append(f"voltage_low: {voltage}V < {vmin}V")
+            elif voltage > vmax:
+                alerts.append(f"voltage_high: {voltage}V > {vmax}V")
 
     soc = data.get("soc")
     if soc is not None and soc < ALERT_SOC_MIN:
         alerts.append(f"soc_low: {soc}% < {ALERT_SOC_MIN}%")
 
+    # Log newly active alerts, respecting the cooldown for repeats.
     for alert in alerts:
         last_triggered = STATE.alerts.get(alert, 0)
         if now - last_triggered >= ALERT_COOLDOWN:
             STATE.alerts[alert] = now
             log.warning("ALERT: %s", alert)
+
+    STATE.active_alerts = alerts
+    publish_alerts(mq, alerts)
 
 
 class WebUIHandler(BaseHTTPRequestHandler):
@@ -811,7 +962,7 @@ def _tcp_loop_single(
                     data = parse_line(line_str)
                     if data:
                         publish_state_map_throttled(mq, data)
-                        check_alerts(data)
+                        check_alerts(mq, data)
                         _persist_and_maybe_cleanup(data)
 
         except (OSError, ConnectionError, ValueError) as exc:

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.4.0
+
+### New Features
+- **Automatic battery voltage class detection** — alert thresholds are now derived from the observed pack voltage (12 V / 24 V / 36 V / 48 V) instead of being hardcoded. Previously a single set of thresholds was applied to every install, so a 12 V or 24 V pack would be judged against 48 V limits and raise constant false alerts. Set `ALERT_VOLTAGE_MIN` and `ALERT_VOLTAGE_MAX` explicitly to override detection.
+- **Actionable alerts in Home Assistant** — alerts are published to MQTT (`<device>/alerts` as JSON, `<device>/alert_state` as `ok`/`alert`) instead of only appearing in the add-on log, so automations can react to them. New **Alert State** sensor exposes this as a normal entity.
+- **Nominal Voltage sensor** — reports the detected pack size (12/24/36/48 V).
+- **Time Remaining is now a duration sensor** — sets `device_class: duration` so Home Assistant renders `1086` minutes as `18 h 6 min` natively.
+
+### Notes
+- The `Alert State` and `Nominal Voltage` sensors appear on their own device page (`Junctek KM140F Alerts`) because they update independently of the throttled sensor stream.
+
 ## 2.3.1
 
 ### Bug Fixes

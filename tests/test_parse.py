@@ -87,6 +87,55 @@ class TestParseC:
         assert result is None
 
 
+class TestVoltageClassDetection:
+    """Tests for automatic battery voltage class detection."""
+
+    def test_12v_pack(self) -> None:
+        from km140f import detect_voltage_class
+
+        nominal, low, high = detect_voltage_class(13.2)
+        assert nominal == 12.0
+        assert low == 11.0
+        assert high == 14.4
+
+    def test_24v_pack(self) -> None:
+        from km140f import detect_voltage_class
+
+        nominal, low, high = detect_voltage_class(26.4)
+        assert nominal == 24.0
+        assert low == 22.0
+        assert high == 28.8
+
+    def test_48v_pack(self) -> None:
+        from km140f import detect_voltage_class
+
+        nominal, low, high = detect_voltage_class(52.7)
+        assert nominal == 48.0
+        assert low == 44.0
+        assert high == 57.6
+
+    def test_48v_pack_charging(self) -> None:
+        """A charging 48 V pack sits near 56 V and must not be misread."""
+        from km140f import detect_voltage_class
+
+        nominal, _low, _high = detect_voltage_class(56.4)
+        assert nominal == 48.0
+
+    def test_12v_pack_is_not_judged_by_48v_limits(self) -> None:
+        """Regression: a 12 V pack must not trigger high-voltage alerts."""
+        from km140f import detect_voltage_class
+
+        _nominal, _low, high = detect_voltage_class(13.8)
+        assert 13.8 < high, "13.8 V must be within a 12 V pack's range"
+
+    def test_48v_pack_does_not_trigger_low_alert(self) -> None:
+        """Regression: the original bug — 52.7 V flagged against a 15 V limit."""
+        from km140f import detect_voltage_class
+
+        _nominal, low, _high = detect_voltage_class(52.7)
+        assert 52.7 > low, "52.7 V must not be below a 48 V pack's minimum"
+
+
 class TestParseLine:
     """Tests for parse_line function."""
 

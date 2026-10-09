@@ -4,7 +4,7 @@ FROM $BUILD_FROM
 # Bake the add-on version into the image so the value reported to Home
 # Assistant always matches the installed add-on. BUILD_VERSION is supplied by
 # Supervisor from config.yaml; the fallback keeps local builds working.
-ARG BUILD_VERSION=2.3.1
+ARG BUILD_VERSION=2.4.0
 ENV SW_VERSION="${BUILD_VERSION}"
 
 # Install dependencies first for better layer caching
