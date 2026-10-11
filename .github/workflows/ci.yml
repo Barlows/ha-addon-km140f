@@ -25,7 +25,10 @@ jobs:
         run: ruff check .
 
       - name: Run mypy
-        run: mypy --config-file mypy.ini km140f/km140f.py
+        # Check all sources, not just the bridge module. The pre-commit hook
+        # already runs repo-wide, so CI must match or it will catch failures
+        # pre-commit already fixed and vice versa.
+        run: mypy --config-file mypy.ini .
 
   test:
     runs-on: ubuntu-latest

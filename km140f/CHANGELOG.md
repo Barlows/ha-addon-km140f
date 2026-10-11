@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.2
+
+### Bug Fixes
+- Fix mypy errors in `tests/test_parse.py` that failed the pre-commit job. The new discovery-payload test helper was missing type annotations. CI now also runs mypy across all sources rather than only `km140f/km140f.py`, matching what the pre-commit hook already checked.
+
 ## 2.4.1
 
 ### Improvements

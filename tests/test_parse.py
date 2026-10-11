@@ -1,12 +1,34 @@
 """Unit tests for KM140F protocol parsing functions."""
 
+from __future__ import annotations
+
+import json
 import sys
 from pathlib import Path
+from typing import Any, cast
+
+import paho.mqtt.client as mqtt
 
 # Add parent directory to path so we can import km140f
 sys.path.insert(0, str(Path(__file__).parent.parent / "km140f"))
 
 from km140f import parse_a, parse_c, parse_line
+
+
+class FakeMQ:
+    """Captures published MQTT messages instead of talking to a broker."""
+
+    def __init__(self) -> None:
+        self.msgs: list[tuple[str, str | None]] = []
+
+    def publish(
+        self,
+        topic: str,
+        payload: str | None = None,
+        retain: bool = False,
+        **kw: Any,
+    ) -> None:
+        self.msgs.append((topic, payload))
 
 
 class TestParseA:
@@ -139,23 +161,16 @@ class TestVoltageClassDetection:
 class TestDiscoveryPayload:
     """Tests for MQTT device discovery payload construction."""
 
-    def _components(self) -> dict:
-        import json
-
+    def _components(self) -> dict[str, Any]:
         import km140f
 
-        class FakeMQ:
-            def __init__(self) -> None:
-                self.msgs = []
-
-            def publish(self, topic, payload=None, retain=False, **kw):
-                self.msgs.append((topic, payload))
-
         mq = FakeMQ()
-        km140f.publish_discovery(mq)
+        km140f.publish_discovery(cast(mqtt.Client, mq))
         for topic, payload in mq.msgs:
             if topic == f"homeassistant/device/{km140f.DEVICE_ID}/config":
-                return json.loads(payload)["cmps"]
+                assert payload is not None, "discovery payload must not be empty"
+                result: dict[str, Any] = json.loads(payload)["cmps"]
+                return result
         raise AssertionError("device discovery payload not found")
 
     def test_set_capacity_is_diagnostic(self) -> None:
