@@ -50,7 +50,7 @@ DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
 # option therefore left users stuck on a stale value after upgrades.
 # Instead we bake it in at image build time from config.yaml so it always
 # matches the installed add-on version.
-SW_VERSION = os.getenv("BUILD_VERSION") or os.getenv("SW_VERSION") or "2.4.0"
+SW_VERSION = os.getenv("BUILD_VERSION") or os.getenv("SW_VERSION") or "2.4.1"
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))
@@ -400,6 +400,9 @@ SENSORS: list[dict[str, Any]] = [
         "icon": "mdi:battery-charging-100",
         "state_class": "measurement",
         "precision": 1,
+        # Configuration value rather than a live measurement. Change it on the
+        # monitor itself; this entity only reflects what the device reports.
+        "entity_category": "diagnostic",
     },
     {
         "uid": "soc",
@@ -462,6 +465,8 @@ def build_component(sensor: dict[str, Any], platform: str = "sensor") -> dict[st
         component["state_class"] = sensor["state_class"]
     if sensor.get("icon"):
         component["icon"] = sensor["icon"]
+    if sensor.get("entity_category"):
+        component["entity_category"] = sensor["entity_category"]
     if sensor.get("precision") is not None:
         component["suggested_display_precision"] = sensor["precision"]
 

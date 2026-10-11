@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.1
+
+### Improvements
+- **Set Capacity is now a diagnostic entity** — it is a configuration value rather than a live measurement, so it now appears under the device's Diagnostics section instead of on the main entity list. Matches the approach used by the companion BLE scanner project. To change capacity, edit it on the monitor itself; this entity reflects what the device reports.
+
 ## 2.4.0
 
 ### New Features

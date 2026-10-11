@@ -59,7 +59,7 @@ The add-on connects to the monitor over TCP, parses the push data stream (`:A=` 
 | Time Remaining | min | to full discharge or charge (duration sensor) |
 | Nominal Voltage | V | auto-detected pack size |
 | Alert State | — | `ok` or `alert` |
-| Set Capacity | Ah | configured in the monitor |
+| Set Capacity | Ah | configured in the monitor (diagnostic entity) |
 | State of Charge | % | calculated from Remaining / Set Capacity |
 | Total Energy Charged | kWh | cumulative, from `:C=` |
 | Total Energy Discharged | kWh | cumulative, from `:C=` |
@@ -112,6 +112,7 @@ Direction: `0` = discharging, `1` = charging.
 
 | Version | Description |
 |---------|-------------|
+| [v2.4.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.4.1) | Set Capacity moved to diagnostics |
 | [v2.4.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.4.0) | Auto voltage class detection, actionable alerts, duration sensor |
 | [v2.3.1](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.3.1) | Firmware version now tracks the actual add-on version |
 | [v2.3.0](https://github.com/Barlows/ha-addon-km140f/releases/tag/v2.3.0) | HA restart recovery, DB cleanup, device discovery, doubled-name fix |

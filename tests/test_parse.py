@@ -136,6 +136,47 @@ class TestVoltageClassDetection:
         assert 52.7 > low, "52.7 V must not be below a 48 V pack's minimum"
 
 
+class TestDiscoveryPayload:
+    """Tests for MQTT device discovery payload construction."""
+
+    def _components(self) -> dict:
+        import json
+
+        import km140f
+
+        class FakeMQ:
+            def __init__(self) -> None:
+                self.msgs = []
+
+            def publish(self, topic, payload=None, retain=False, **kw):
+                self.msgs.append((topic, payload))
+
+        mq = FakeMQ()
+        km140f.publish_discovery(mq)
+        for topic, payload in mq.msgs:
+            if topic == f"homeassistant/device/{km140f.DEVICE_ID}/config":
+                return json.loads(payload)["cmps"]
+        raise AssertionError("device discovery payload not found")
+
+    def test_set_capacity_is_diagnostic(self) -> None:
+        """Set Capacity is config, not a live reading — matches sibling project."""
+        comps = self._components()
+        assert comps["set_capacity"]["entity_category"] == "diagnostic"
+
+    def test_live_measurements_are_not_diagnostic(self) -> None:
+        """Real measurements must stay on the main device page."""
+        comps = self._components()
+        for uid in ("voltage", "current", "power", "soc"):
+            assert "entity_category" not in comps[uid], (
+                f"{uid} should not be diagnostic"
+            )
+
+    def test_all_components_have_unique_ids(self) -> None:
+        comps = self._components()
+        ids = [c["unique_id"] for c in comps.values()]
+        assert len(ids) == len(set(ids)), "duplicate unique_id in discovery payload"
+
+
 class TestParseLine:
     """Tests for parse_line function."""
 
