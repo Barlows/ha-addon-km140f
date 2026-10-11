@@ -18,8 +18,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
+        # Pinned to match .pre-commit-config.yaml. Unpinned installs let CI and
+        # pre-commit drift apart and disagree on formatting or type errors.
         run: |
-          pip install ruff mypy paho-mqtt
+          pip install ruff==0.16.9 mypy==1.19.1 paho-mqtt
 
       - name: Run ruff
         run: ruff check .

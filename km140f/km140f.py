@@ -50,7 +50,7 @@ DEVICE_NAME = os.getenv("DEVICE_NAME", "Junctek KM140F")
 # option therefore left users stuck on a stale value after upgrades.
 # Instead we bake it in at image build time from config.yaml so it always
 # matches the installed add-on version.
-SW_VERSION = os.getenv("BUILD_VERSION") or os.getenv("SW_VERSION") or "2.4.2"
+SW_VERSION = os.getenv("BUILD_VERSION") or os.getenv("SW_VERSION") or "2.4.3"
 
 POLL_C_INTERVAL = int(os.getenv("POLL_C_INTERVAL", "30"))
 RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "5"))

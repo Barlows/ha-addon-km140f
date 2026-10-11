@@ -1,14 +1,17 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Keep in sync with the ruff version pinned in .github/workflows/ci.yml.
+    # These two must agree or CI and pre-commit will disagree on formatting.
+    rev: v0.16.9
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.2
+    # Keep in sync with the mypy version pinned in .github/workflows/ci.yml.
+    rev: v1.19.1
     hooks:
       - id: mypy
-        additional_dependencies: [paho-mqtt]
+        additional_dependencies: [paho-mqtt, types-requests]
         args: [--config-file=mypy.ini]

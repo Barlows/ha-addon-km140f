@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.3
+
+### Bug Fixes
+- Fix pre-commit failure caused by tool version drift. The pre-commit config pinned ruff `v0.6.9` and mypy `v1.11.2` while CI installed both unpinned, so the three environments (local, CI, pre-commit) disagreed on formatting. The pre-commit config now pins ruff `v0.16.9` and mypy `v1.19.1`, and CI installs those exact versions. No source changes.
+
 ## 2.4.2
 
 ### Bug Fixes
